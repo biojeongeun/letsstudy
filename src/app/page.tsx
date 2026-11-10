@@ -718,6 +718,53 @@ export default function HomePage() {
     }
   };
 
+  // 일별 감독관 서명 및 담임 확인 초기화 핸들러 (담임교사 & 오후자습감독관 모두 가능)
+  const handleResetConfirmation = async (
+    targetDate: string,
+    target: 'all' | 'period8' | 'period9' | 'teacher' = 'all'
+  ) => {
+    setSavingSignature(true);
+    try {
+      const res = await fetch('/api/study', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'reset_confirmation',
+          studyDate: targetDate,
+          target,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        if (targetDate === signingDate) {
+          if (target === 'all' || target === 'period8') {
+            setSignP8Name('');
+            setSignP8Headcount('');
+          }
+          if (target === 'all' || target === 'period9') {
+            setSignP9Name('');
+            setSignP9Headcount('');
+          }
+          if (target === 'all') {
+            setSignSpecialNote('');
+          }
+        }
+        await fetchStudyData(selectedMonth, selectedDate);
+        const labelMap = {
+          all: '8·9교시 서명 및 담임 확인 전체',
+          period8: '8교시 감독관 서명',
+          period9: '9교시 감독관 서명',
+          teacher: '담임선생님 확인 도장',
+        };
+        showToast(`🔄 ${targetDate} ${labelMap[target]}이(가) 깨끗하게 초기화되었어요!`);
+      } else {
+        showToast(data.error || '서명 초기화에 실패했습니다.');
+      }
+    } finally {
+      setSavingSignature(false);
+    }
+  };
+
   // 학생 개별 추가 (교사 전용)
   const handleAddStudent = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1581,9 +1628,18 @@ export default function HomePage() {
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="p-4 rounded-2xl bg-amber-50/60 border-2 border-amber-200/80 space-y-2">
-                  <label className="block text-xs font-extrabold text-amber-900">
-                    🌱 8교시 (16:20~17:10) 감독관 서명
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-extrabold text-amber-900">
+                      🌱 8교시 (16:20~17:10) 감독관 서명
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => handleResetConfirmation(signingDate, 'period8')}
+                      className="text-[11px] font-extrabold text-amber-700 hover:text-rose-600 bg-white px-2 py-0.5 rounded-full border border-amber-200 transition"
+                    >
+                      🔄 8교시 초기화
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={signP8Name}
@@ -1600,9 +1656,18 @@ export default function HomePage() {
                 </div>
 
                 <div className="p-4 rounded-2xl bg-rose-50/60 border-2 border-rose-200/80 space-y-2">
-                  <label className="block text-xs font-extrabold text-rose-900">
-                    🍀 9교시 (17:20~18:10) 감독관 서명
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-extrabold text-rose-900">
+                      🍀 9교시 (17:20~18:10) 감독관 서명
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => handleResetConfirmation(signingDate, 'period9')}
+                      className="text-[11px] font-extrabold text-rose-700 hover:text-rose-900 bg-white px-2 py-0.5 rounded-full border border-rose-200 transition"
+                    >
+                      🔄 9교시 초기화
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={signP9Name}
@@ -1632,7 +1697,16 @@ export default function HomePage() {
                 </div>
               </div>
 
-              <div className="flex justify-end">
+              <div className="flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={savingSignature}
+                  onClick={() => handleResetConfirmation(signingDate, 'all')}
+                  className="px-4 py-3 rounded-2xl bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 border border-slate-200 hover:border-rose-200 font-extrabold text-xs flex items-center gap-1.5 transition"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  {signingDate} 서명 전체 초기화
+                </button>
                 <button
                   type="submit"
                   disabled={savingSignature}
@@ -1676,7 +1750,7 @@ export default function HomePage() {
                 </button>
               </div>
               <p className="text-xs font-extrabold text-amber-900 bg-amber-50 px-3.5 py-1.5 rounded-full border border-amber-200">
-                💡 표에서 날짜 칸을 톡 클릭하면 아래에서 8교시·9교시 감독관 서명과 담임선생님 확인 도장을 찍을 수 있어요!
+                💡 표에서 날짜 칸을 톡 클릭해 서명하거나, 잘못 서명한 날은 칸 안의 [🔄 초기화] 버튼으로 바로 지울 수 있어요!
               </p>
             </div>
 
@@ -1702,21 +1776,50 @@ export default function HomePage() {
                           <td className="w-20 sm:w-24 py-2.5 px-2 border-r border-amber-200 text-center font-extrabold text-amber-900">
                             날짜
                           </td>
-                          {week.map((dayCell, dIdx) => (
-                            <td
-                              key={dIdx}
-                              onClick={() => {
-                                if (dayCell) setSigningDate(dayCell.dateStr);
-                              }}
-                              className={`py-2.5 px-2 border-r last:border-r-0 border-amber-200 text-center font-extrabold cursor-pointer transition ${
-                                dayCell?.dateStr === signingDate
-                                  ? 'bg-amber-300 text-slate-900'
-                                  : 'hover:bg-amber-100/70 text-slate-800'
-                              }`}
-                            >
-                              {dayCell ? dayCell.label : ''}
-                            </td>
-                          ))}
+                          {week.map((dayCell, dIdx) => {
+                            const conf = dayCell
+                              ? confirmationsByDate.get(dayCell.dateStr)
+                              : undefined;
+                            const hasAnyRecord = Boolean(
+                              conf?.period8_supervisor_name ||
+                                conf?.period9_supervisor_name ||
+                                conf?.teacher_confirmed ||
+                                conf?.special_note
+                            );
+                            return (
+                              <td
+                                key={dIdx}
+                                onClick={() => {
+                                  if (dayCell) setSigningDate(dayCell.dateStr);
+                                }}
+                                className={`py-2 px-2 border-r last:border-r-0 border-amber-200 text-center font-extrabold cursor-pointer transition ${
+                                  dayCell?.dateStr === signingDate
+                                    ? 'bg-amber-300 text-slate-900'
+                                    : 'hover:bg-amber-100/70 text-slate-800'
+                                }`}
+                              >
+                                {dayCell && (
+                                  <div className="flex flex-wrap items-center justify-center gap-1.5">
+                                    <span>{dayCell.label}</span>
+                                    {hasAnyRecord && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setSigningDate(dayCell.dateStr);
+                                          handleResetConfirmation(dayCell.dateStr, 'all');
+                                        }}
+                                        className="px-1.5 py-0.5 rounded-full bg-white/90 hover:bg-rose-500 text-rose-600 hover:text-white border border-rose-200 text-[10px] font-black transition no-print"
+                                        title={`${dayCell.label} 서명 및 확인 전체 초기화`}
+                                      >
+                                        🔄 초기화
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          })}
                         </tr>
 
                         {/* 확인 행 - 1번째 줄: 8교시 (16:20~17:10) */}
@@ -1762,6 +1865,18 @@ export default function HomePage() {
                                               {conf.period8_headcount}명
                                             </span>
                                           )}
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSigningDate(dayCell.dateStr);
+                                            handleResetConfirmation(dayCell.dateStr, 'period8');
+                                          }}
+                                          className="ml-0.5 w-4 h-4 rounded-full bg-rose-100 hover:bg-rose-500 text-rose-600 hover:text-white inline-flex items-center justify-center text-[10px] transition no-print"
+                                          title="8교시 서명만 초기화"
+                                        >
+                                          ×
+                                        </button>
                                       </span>
                                     ) : (
                                       <span className="text-[11px] text-slate-300 font-medium no-print">
@@ -1807,6 +1922,18 @@ export default function HomePage() {
                                               {conf.period9_headcount}명
                                             </span>
                                           )}
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSigningDate(dayCell.dateStr);
+                                            handleResetConfirmation(dayCell.dateStr, 'period9');
+                                          }}
+                                          className="ml-0.5 w-4 h-4 rounded-full bg-rose-100 hover:bg-rose-500 text-rose-600 hover:text-white inline-flex items-center justify-center text-[10px] transition no-print"
+                                          title="9교시 서명만 초기화"
+                                        >
+                                          ×
+                                        </button>
                                       </span>
                                     ) : (
                                       <span className="text-[11px] text-slate-300 font-medium no-print">
@@ -1816,7 +1943,19 @@ export default function HomePage() {
 
                                     {conf?.teacher_confirmed && (
                                       <span className="mt-0.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[10px] font-black border border-rose-300">
-                                        💮 담임선생님 확인완료
+                                        <span>💮 담임선생님 확인완료</span>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSigningDate(dayCell.dateStr);
+                                            handleResetConfirmation(dayCell.dateStr, 'teacher');
+                                          }}
+                                          className="ml-0.5 text-rose-500 hover:text-rose-900 no-print"
+                                          title="담임선생님 확인 도장 초기화"
+                                        >
+                                          ×
+                                        </button>
                                       </span>
                                     )}
                                     {conf?.special_note && (
@@ -1860,32 +1999,44 @@ export default function HomePage() {
                     📅 선택 날짜: {signingDate}
                   </span>
                   <h3 className="text-sm sm:text-base font-black text-slate-800">
-                    8교시·9교시 감독관 서명 및 특이사항 기록하기
+                    8교시·9교시 감독관 서명 및 일별 초기화
                   </h3>
                 </div>
 
-                {role === 'teacher' && (
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      const currentConf = confirmationsByDate.get(signingDate);
-                      handleToggleTeacherConfirm(
-                        signingDate,
-                        !currentConf?.teacher_confirmed
-                      );
-                    }}
-                    className={`px-4 py-2 rounded-2xl text-xs font-black flex items-center gap-1.5 transition ${
-                      confirmationsByDate.get(signingDate)?.teacher_confirmed
-                        ? 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300'
-                        : 'bg-gradient-to-r from-rose-400 to-pink-500 text-white hover:from-rose-500 hover:to-pink-600 shadow-sm'
-                    }`}
+                    disabled={savingSignature}
+                    onClick={() => handleResetConfirmation(signingDate, 'all')}
+                    className="px-3.5 py-2 rounded-2xl bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 border border-slate-200 hover:border-rose-200 text-xs font-black flex items-center gap-1.5 transition"
                   >
-                    <span>💮</span>
-                    {confirmationsByDate.get(signingDate)?.teacher_confirmed
-                      ? '담임선생님 확인 도장 취소'
-                      : '다음 날 아침 담임선생님 확인 도장 꾹!'}
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    🔄 {signingDate} 서명·확인 전체 초기화
                   </button>
-                )}
+
+                  {role === 'teacher' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const currentConf = confirmationsByDate.get(signingDate);
+                        handleToggleTeacherConfirm(
+                          signingDate,
+                          !currentConf?.teacher_confirmed
+                        );
+                      }}
+                      className={`px-4 py-2 rounded-2xl text-xs font-black flex items-center gap-1.5 transition ${
+                        confirmationsByDate.get(signingDate)?.teacher_confirmed
+                          ? 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300'
+                          : 'bg-gradient-to-r from-rose-400 to-pink-500 text-white hover:from-rose-500 hover:to-pink-600 shadow-sm'
+                      }`}
+                    >
+                      <span>💮</span>
+                      {confirmationsByDate.get(signingDate)?.teacher_confirmed
+                        ? '담임선생님 확인 도장 초기화'
+                        : '다음 날 아침 담임선생님 확인 도장 꾹!'}
+                    </button>
+                  )}
+                </div>
               </div>
 
               <form
@@ -1893,9 +2044,18 @@ export default function HomePage() {
                 className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end"
               >
                 <div>
-                  <label className="block text-xs font-extrabold text-amber-900 mb-1">
-                    🌱 8교시 감독관 확인(서명)
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-extrabold text-amber-900">
+                      🌱 8교시 감독관 확인(서명)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => handleResetConfirmation(signingDate, 'period8')}
+                      className="text-[11px] font-bold text-slate-400 hover:text-rose-500"
+                    >
+                      8교시 초기화
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={signP8Name}
@@ -1905,9 +2065,18 @@ export default function HomePage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-extrabold text-rose-900 mb-1">
-                    🍀 9교시 감독관 확인(서명)
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-extrabold text-rose-900">
+                      🍀 9교시 감독관 확인(서명)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => handleResetConfirmation(signingDate, 'period9')}
+                      className="text-[11px] font-bold text-slate-400 hover:text-rose-500"
+                    >
+                      9교시 초기화
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={signP9Name}

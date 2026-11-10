@@ -217,6 +217,73 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, confirmation: data });
     }
 
+    // 2-1. 일별 감독관 서명 및 담임 확인 초기화 (감독관 & 담임교사 모두 가능)
+    if (action === 'reset_confirmation') {
+      const { studyDate, target = 'all' } = body;
+      if (!studyDate) {
+        return NextResponse.json({ error: '초기화할 날짜가 필요합니다.' }, { status: 400 });
+      }
+
+      const { data: existing } = await scoped
+        .from('supervisor_confirmations')
+        .select('*')
+        .eq('classroom_id', session.classroomId)
+        .eq('study_date', studyDate)
+        .maybeSingle();
+
+      if (!existing) {
+        return NextResponse.json({ ok: true, confirmation: null });
+      }
+
+      const nowIso = new Date().toISOString();
+      const resetFields =
+        target === 'period8'
+          ? {
+              period8_supervisor_name: '',
+              period8_signed_at: null,
+              period8_headcount: null,
+              updated_at: nowIso,
+            }
+          : target === 'period9'
+          ? {
+              period9_supervisor_name: '',
+              period9_signed_at: null,
+              period9_headcount: null,
+              updated_at: nowIso,
+            }
+          : target === 'teacher'
+          ? {
+              teacher_confirmed: false,
+              teacher_confirmed_at: null,
+              updated_at: nowIso,
+            }
+          : {
+              period8_supervisor_name: '',
+              period8_signed_at: null,
+              period8_headcount: null,
+              period9_supervisor_name: '',
+              period9_signed_at: null,
+              period9_headcount: null,
+              special_note: '',
+              teacher_confirmed: false,
+              teacher_confirmed_at: null,
+              updated_at: nowIso,
+            };
+
+      const { data, error } = await scoped
+        .from('supervisor_confirmations')
+        .update(resetFields)
+        .eq('classroom_id', session.classroomId)
+        .eq('study_date', studyDate)
+        .select('*')
+        .single();
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+      return NextResponse.json({ ok: true, confirmation: data });
+    }
+
     // 아래 기능부터는 담임교사(관리자) 전용 권한 검사
     if (session.role !== 'teacher') {
       return NextResponse.json(
