@@ -321,7 +321,7 @@ export default function HomePage() {
     setSelectedMonth(nextM);
   };
 
-  // selectedDate 또는 monthAttendance/students 변경 시 일일 출석표 로컬 버퍼 동기화
+  // selectedDate 또는 monthAttendance/students 변경 시 일일 출석표 로컬 버퍼 동기화 (미기록/취소 상태는 빈 문자열 ''로 유지하여 출석 취소·초기화가 즉시 반영되도록 처리)
   useEffect(() => {
     const map: Record<
       string,
@@ -339,10 +339,10 @@ export default function HomePage() {
     for (const st of students) {
       const rec = byStudent.get(st.id);
       map[st.id] = {
-        period8Status: rec?.period8_status || '출석',
-        period8Note: rec?.period8_note || '',
-        period9Status: rec?.period9_status || '출석',
-        period9Note: rec?.period9_note || '',
+        period8Status: rec?.period8_status ?? '',
+        period8Note: rec?.period8_note ?? '',
+        period9Status: rec?.period9_status ?? '',
+        period9Note: rec?.period9_note ?? '',
       };
     }
     setDailyDraft(map);
@@ -374,31 +374,49 @@ export default function HomePage() {
     }
   }, [signingDate, monthConfirmations, supervisorName]);
 
-  // 당일 8교시/9교시 출석 인원 실시간 계산
+  // 당일 8교시/9교시 출석·불참·미체크 인원 실시간 계산
   const dailySummary = useMemo(() => {
     let p8Present = 0;
+    let p8Absent = 0;
+    let p8Unchecked = 0;
     let p9Present = 0;
+    let p9Absent = 0;
+    let p9Unchecked = 0;
     const p8ReasonCounts: Record<string, number> = {};
     const p9ReasonCounts: Record<string, number> = {};
 
     for (const st of students) {
       const row = dailyDraft[st.id];
-      const s8 = row?.period8Status || '출석';
-      const s9 = row?.period9Status || '출석';
+      const s8 = (row?.period8Status || '').trim();
+      const s9 = (row?.period9Status || '').trim();
 
-      if (s8 === '출석') p8Present += 1;
-      else p8ReasonCounts[s8] = (p8ReasonCounts[s8] || 0) + 1;
+      if (s8 === '출석') {
+        p8Present += 1;
+      } else if (s8 && s8 !== '미체크') {
+        p8Absent += 1;
+        p8ReasonCounts[s8] = (p8ReasonCounts[s8] || 0) + 1;
+      } else {
+        p8Unchecked += 1;
+      }
 
-      if (s9 === '출석') p9Present += 1;
-      else p9ReasonCounts[s9] = (p9ReasonCounts[s9] || 0) + 1;
+      if (s9 === '출석') {
+        p9Present += 1;
+      } else if (s9 && s9 !== '미체크') {
+        p9Absent += 1;
+        p9ReasonCounts[s9] = (p9ReasonCounts[s9] || 0) + 1;
+      } else {
+        p9Unchecked += 1;
+      }
     }
 
     return {
       total: students.length,
       p8Present,
-      p8Absent: students.length - p8Present,
+      p8Absent,
+      p8Unchecked,
       p9Present,
-      p9Absent: students.length - p9Present,
+      p9Absent,
+      p9Unchecked,
       p8ReasonCounts,
       p9ReasonCounts,
     };
@@ -425,26 +443,29 @@ export default function HomePage() {
       }> = [];
 
       for (const r of records) {
-        if (r.period8_status === '출석') {
+        const s8 = (r.period8_status || '').trim();
+        const s9 = (r.period9_status || '').trim();
+
+        if (s8 === '출석') {
           p8Attended += 1;
-        } else {
-          reasonBreakdown[r.period8_status] = (reasonBreakdown[r.period8_status] || 0) + 1;
+        } else if (s8 && s8 !== '미체크') {
+          reasonBreakdown[s8] = (reasonBreakdown[s8] || 0) + 1;
           absenceHistory.push({
             date: r.study_date,
             period: '8교시',
-            reason: r.period8_status,
+            reason: s8,
             note: r.period8_note || '',
           });
         }
 
-        if (r.period9_status === '출석') {
+        if (s9 === '출석') {
           p9Attended += 1;
-        } else {
-          reasonBreakdown[r.period9_status] = (reasonBreakdown[r.period9_status] || 0) + 1;
+        } else if (s9 && s9 !== '미체크') {
+          reasonBreakdown[s9] = (reasonBreakdown[s9] || 0) + 1;
           absenceHistory.push({
             date: r.study_date,
             period: '9교시',
-            reason: r.period9_status,
+            reason: s9,
             note: r.period9_note || '',
           });
         }
@@ -455,7 +476,7 @@ export default function HomePage() {
       const attendanceRate =
         totalPossiblePeriods > 0
           ? Math.round((totalAttendedPeriods / totalPossiblePeriods) * 100)
-          : 100;
+          : 0;
 
       return {
         student: st,
@@ -546,64 +567,58 @@ export default function HomePage() {
     setActiveTab('attendance');
   };
 
-  // 개별 학생의 8교시 또는 9교시 출석 상태 변경 및 해당 날짜 전체 학생 누적 즉시 저장
+  // 개별 학생의 8교시 또는 9교시 출석 상태 변경 및 재클릭 시 출석 취소(토글 해제)
   const handleSelectPeriodStatus = async (
     studentId: string,
     period: 8 | 9,
     nextStatus: string
   ) => {
     const current = dailyDraft[studentId] || {
-      period8Status: '출석',
+      period8Status: '',
       period8Note: '',
-      period9Status: '출석',
+      period9Status: '',
       period9Note: '',
     };
 
+    const currentPeriodStatus = period === 8 ? current.period8Status : current.period9Status;
+    // 이미 선택된 버튼(예: '출석')을 다시 누르거나 빈 값('')을 전달하면 해당 교시 출석 취소('')
+    const finalStatus = currentPeriodStatus === nextStatus ? '' : nextStatus;
+
     const updated = {
       ...current,
-      ...(period === 8 ? { period8Status: nextStatus } : { period9Status: nextStatus }),
+      ...(period === 8 ? { period8Status: finalStatus } : { period9Status: finalStatus }),
     };
 
-    const nextDraft = {
-      ...dailyDraft,
+    setDailyDraft((prev) => ({
+      ...prev,
       [studentId]: updated,
-    };
-
-    setDailyDraft(nextDraft);
-
-    const targetDate = selectedDate;
-    const allRecordsForDate = students.map((st) => {
-      const d =
-        st.id === studentId
-          ? updated
-          : nextDraft[st.id] || {
-              period8Status: '출석',
-              period8Note: '',
-              period9Status: '출석',
-              period9Note: '',
-            };
-      return {
-        studentId: st.id,
-        period8Status: d.period8Status || '출석',
-        period8Note: d.period8Note || '',
-        period9Status: d.period9Status || '출석',
-        period9Note: d.period9Note || '',
-      };
-    });
-
-    // 즉시 화면의 월별 누적 시간(monthAttendance)에도 반영하여 연속 클릭 시 상태 역전 방지
-    const optimisticRows: AttendanceRecord[] = allRecordsForDate.map((r) => ({
-      student_id: r.studentId,
-      study_date: targetDate,
-      period8_status: r.period8Status,
-      period8_note: r.period8Note,
-      period9_status: r.period9Status,
-      period9_note: r.period9Note,
     }));
 
+    const targetDate = selectedDate;
+
     setMonthAttendance((prev) => {
-      const filtered = prev.filter((r) => r.study_date !== targetDate);
-      return [...filtered, ...optimisticRows];
+      const withoutTargetStudent = prev.filter(
+        (r) => !(r.study_date === targetDate && r.student_id === studentId)
+      );
+      if (
+        !updated.period8Status &&
+        !updated.period9Status &&
+        !updated.period8Note &&
+        !updated.period9Note
+      ) {
+        return withoutTargetStudent;
+      }
+      return [
+        ...withoutTargetStudent,
+        {
+          student_id: studentId,
+          study_date: targetDate,
+          period8_status: updated.period8Status,
+          period8_note: updated.period8Note,
+          period9_status: updated.period9Status,
+          period9_note: updated.period9Note,
+        },
+      ];
     });
 
     const seq = ++saveSeqRef.current;
@@ -615,27 +630,50 @@ export default function HomePage() {
         body: JSON.stringify({
           action: 'upsert_attendance',
           studyDate: targetDate,
-          records: allRecordsForDate,
+          records: [
+            {
+              studentId,
+              period8Status: updated.period8Status,
+              period8Note: updated.period8Note,
+              period9Status: updated.period9Status,
+              period9Note: updated.period9Note,
+            },
+          ],
         }),
       });
       if (res.ok && seq === saveSeqRef.current) {
         const data = await res.json();
         const savedRecords = data.records || [];
-        if (savedRecords.length > 0) {
-          setMonthAttendance((prev) => {
-            const filtered = prev.filter((r) => r.study_date !== targetDate);
-            return [...filtered, ...savedRecords];
-          });
-        }
+        setMonthAttendance((prev) => {
+          const filtered = prev.filter((r) => r.study_date !== targetDate);
+          return [...filtered, ...savedRecords];
+        });
       }
     } catch {
       // ignore transient error
     }
   };
 
-  // 특정 날짜의 출석 기록 초기화 핸들러
-  const handleResetDailyAttendance = async (targetDate: string) => {
-    setSavingAttendance(true);
+  // 개별 학생 당일 출석 전체 취소 (8·9교시 모두 취소)
+  const handleCancelStudentDailyAttendance = async (
+    studentId: string,
+    studentName: string
+  ) => {
+    const targetDate = selectedDate;
+    setDailyDraft((prev) => ({
+      ...prev,
+      [studentId]: {
+        period8Status: '',
+        period8Note: '',
+        period9Status: '',
+        period9Note: '',
+      },
+    }));
+    setMonthAttendance((prev) =>
+      prev.filter((r) => !(r.study_date === targetDate && r.student_id === studentId))
+    );
+
+    const seq = ++saveSeqRef.current;
     try {
       const res = await fetch('/api/study', {
         method: 'POST',
@@ -643,34 +681,187 @@ export default function HomePage() {
         body: JSON.stringify({
           action: 'reset_daily_attendance',
           studyDate: targetDate,
+          studentId,
+          period: 'all',
         }),
       });
-      if (res.ok) {
-        await fetchStudyData(selectedMonth, selectedDate);
-        showToast(`🔄 ${targetDate} 출석 기록이 초기화되어 누적 시간에서 제외되었어요.`);
+      if (res.ok && seq === saveSeqRef.current) {
+        const data = await res.json();
+        const savedRecords = data.records || [];
+        setMonthAttendance((prev) => {
+          const filtered = prev.filter((r) => r.study_date !== targetDate);
+          return [...filtered, ...savedRecords];
+        });
+      }
+      showToast(`↩️ ${studentName} 학생의 ${targetDate} 출석이 취소(초기화)되었어요.`);
+    } catch {
+      // ignore
+    }
+  };
+
+  // 전 학생 전원 출석 일괄 체크 (8·9교시 전체 또는 8교시만 / 9교시만)
+  const handleMarkAllPresent = async (targetPeriod: 'all' | 8 | 9 = 'all') => {
+    if (students.length === 0) return;
+    setSavingAttendance(true);
+    const targetDate = selectedDate;
+
+    const nextDraft: typeof dailyDraft = {};
+    for (const st of students) {
+      const cur = dailyDraft[st.id] || {
+        period8Status: '',
+        period8Note: '',
+        period9Status: '',
+        period9Note: '',
+      };
+      nextDraft[st.id] = {
+        ...cur,
+        period8Status: targetPeriod === 'all' || targetPeriod === 8 ? '출석' : cur.period8Status,
+        period9Status: targetPeriod === 'all' || targetPeriod === 9 ? '출석' : cur.period9Status,
+      };
+    }
+    setDailyDraft(nextDraft);
+
+    const records = students.map((st) => ({
+      studentId: st.id,
+      period8Status: nextDraft[st.id].period8Status,
+      period8Note: nextDraft[st.id].period8Note,
+      period9Status: nextDraft[st.id].period9Status,
+      period9Note: nextDraft[st.id].period9Note,
+    }));
+
+    const seq = ++saveSeqRef.current;
+    try {
+      const res = await fetch('/api/study', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'upsert_attendance',
+          studyDate: targetDate,
+          records,
+        }),
+      });
+      if (res.ok && seq === saveSeqRef.current) {
+        const data = await res.json();
+        const savedRecords = data.records || [];
+        setMonthAttendance((prev) => {
+          const filtered = prev.filter((r) => r.study_date !== targetDate);
+          return [...filtered, ...savedRecords];
+        });
+        const label =
+          targetPeriod === 'all'
+            ? '8·9교시 전원 출석'
+            : targetPeriod === 8
+            ? '8교시 전원 출석'
+            : '9교시 전원 출석';
+        showToast(`🌱 ${targetDate} ${label}으로 일괄 체크 및 저장되었어요!`);
       }
     } finally {
       setSavingAttendance(false);
     }
   };
 
-  // 전체 출석체크 일괄 저장
+  // 특정 날짜의 출석 기록 초기화 핸들러 (전체 또는 8교시만 / 9교시만)
+  const handleResetDailyAttendance = async (
+    targetDate: string,
+    period: 'all' | 'period8' | 'period9' = 'all'
+  ) => {
+    setSavingAttendance(true);
+    const seq = ++saveSeqRef.current;
+
+    if (targetDate === selectedDate) {
+      setDailyDraft((prev) => {
+        const next: typeof prev = {};
+        for (const st of students) {
+          const cur = prev[st.id] || {
+            period8Status: '',
+            period8Note: '',
+            period9Status: '',
+            period9Note: '',
+          };
+          next[st.id] = {
+            period8Status: period === 'all' || period === 'period8' ? '' : cur.period8Status,
+            period8Note: period === 'all' || period === 'period8' ? '' : cur.period8Note,
+            period9Status: period === 'all' || period === 'period9' ? '' : cur.period9Status,
+            period9Note: period === 'all' || period === 'period9' ? '' : cur.period9Note,
+          };
+        }
+        return next;
+      });
+    }
+
+    try {
+      const res = await fetch('/api/study', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'reset_daily_attendance',
+          studyDate: targetDate,
+          period,
+        }),
+      });
+      if (res.ok && seq === saveSeqRef.current) {
+        const data = await res.json();
+        const savedRecords = data.records || [];
+        setMonthAttendance((prev) => {
+          const filtered = prev.filter((r) => r.study_date !== targetDate);
+          return [...filtered, ...savedRecords];
+        });
+        const periodLabel =
+          period === 'all'
+            ? '전체 출석'
+            : period === 'period8'
+            ? '8교시 출석'
+            : '9교시 출석';
+        showToast(`🔄 ${targetDate} ${periodLabel} 기록이 깨끗하게 초기화(취소)되었어요!`);
+      }
+    } finally {
+      setSavingAttendance(false);
+    }
+  };
+
+  // 월간 출석 기록 초기화 핸들러 (특정 학생 또는 학급 전체)
+  const handleResetMonthlyAttendance = async (studentId?: string, studentName?: string) => {
+    setSavingAttendance(true);
+    try {
+      const res = await fetch('/api/study', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'reset_monthly_attendance',
+          month: selectedMonth,
+          studentId,
+        }),
+      });
+      if (res.ok) {
+        await fetchStudyData(selectedMonth, selectedDate);
+        showToast(
+          studentName
+            ? `🔄 ${studentName} 학생의 ${selectedMonth} 월간 출석 기록이 초기화되었어요.`
+            : `🔄 ${selectedMonth} 우리 반 전체 출석 기록이 초기화되었어요.`
+        );
+      }
+    } finally {
+      setSavingAttendance(false);
+    }
+  };
+
+  // 전체 출석체크 일괄 저장 (미체크 학생은 '출석'으로 채워서 저장)
   const handleSaveAllDailyAttendance = async () => {
     if (students.length === 0) return;
     setSavingAttendance(true);
     try {
       const records = students.map((st) => {
         const d = dailyDraft[st.id] || {
-          period8Status: '출석',
+          period8Status: '',
           period8Note: '',
-          period9Status: '출석',
+          period9Status: '',
           period9Note: '',
         };
         return {
           studentId: st.id,
-          period8Status: d.period8Status,
+          period8Status: d.period8Status || '출석',
           period8Note: d.period8Note,
-          period9Status: d.period9Status,
+          period9Status: d.period9Status || '출석',
           period9Note: d.period9Note,
         };
       });
@@ -702,9 +893,9 @@ export default function HomePage() {
     const nextDraft: typeof dailyDraft = {};
     for (const st of students) {
       const cur = dailyDraft[st.id] || {
-        period8Status: '출석',
+        period8Status: '',
         period8Note: '',
-        period9Status: '출석',
+        period9Status: '',
         period9Note: '',
       };
       nextDraft[st.id] = {
@@ -720,9 +911,9 @@ export default function HomePage() {
       const d = nextDraft[st.id];
       return {
         studentId: st.id,
-        period8Status: d.period8Status || '출석',
+        period8Status: d.period8Status,
         period8Note: d.period8Note || '',
-        period9Status: d.period9Status || '출석',
+        period9Status: d.period9Status,
         period9Note: d.period9Note || '',
       };
     });
@@ -741,12 +932,10 @@ export default function HomePage() {
       if (res.ok && seq === saveSeqRef.current) {
         const data = await res.json();
         const savedRecords = data.records || [];
-        if (savedRecords.length > 0) {
-          setMonthAttendance((prev) => {
-            const filtered = prev.filter((r) => r.study_date !== targetDate);
-            return [...filtered, ...savedRecords];
-          });
-        }
+        setMonthAttendance((prev) => {
+          const filtered = prev.filter((r) => r.study_date !== targetDate);
+          return [...filtered, ...savedRecords];
+        });
         showToast(`🐰 ${targetDate} 8교시 출결 상태를 9교시로 똑같이 복사하고 저장했어요!`);
       }
     } catch {
@@ -1441,7 +1630,15 @@ export default function HomePage() {
                       {selectedDate} 자습 현황 (우리 반 총원 {dailySummary.total}명)
                     </span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleMarkAllPresent('all')}
+                      disabled={savingAttendance}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-black transition shadow-sm"
+                    >
+                      🌱 8·9교시 전원 출석
+                    </button>
                     <button
                       type="button"
                       onClick={handleCopyPeriod8ToPeriod9}
@@ -1451,9 +1648,18 @@ export default function HomePage() {
                     </button>
                     <button
                       type="button"
+                      onClick={() => handleResetDailyAttendance(selectedDate, 'all')}
+                      disabled={savingAttendance}
+                      className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-extrabold flex items-center gap-1 transition shadow-sm"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      오늘 출석 전체 초기화
+                    </button>
+                    <button
+                      type="button"
                       onClick={handleSaveAllDailyAttendance}
                       disabled={savingAttendance}
-                      className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-black flex items-center gap-1.5 shadow-sm transition"
+                      className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-black flex items-center gap-1.5 shadow-sm transition"
                     >
                       <Save className="w-3.5 h-3.5" />
                       {savingAttendance ? '저장 중...' : '전체 출석표 저장 ✨'}
@@ -1467,16 +1673,25 @@ export default function HomePage() {
                       <span className="text-xs font-extrabold text-emerald-800">
                         🌱 8교시 (16:20 ~ 17:10 · 50분)
                       </span>
-                      <span className="text-base font-black text-emerald-600">
+                      <span className="text-sm sm:text-base font-black text-emerald-600">
                         출석 {dailySummary.p8Present}명{' '}
                         <span className="text-xs font-bold text-rose-500">
                           / 불참 {dailySummary.p8Absent}명
+                        </span>{' '}
+                        <span className="text-xs font-semibold text-slate-400">
+                          (미체크 {dailySummary.p8Unchecked}명)
                         </span>
                       </span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-bold">
-                      {Object.entries(dailySummary.p8ReasonCounts).length === 0 ? (
-                        <span className="text-emerald-600">🎉 전원 8교시 출석!</span>
+                      {dailySummary.p8Present === 0 && dailySummary.p8Absent === 0 ? (
+                        <span className="text-slate-400">
+                          아직 8교시 출석 체크 전이에요 (또는 초기화됨)
+                        </span>
+                      ) : Object.entries(dailySummary.p8ReasonCounts).length === 0 ? (
+                        <span className="text-emerald-600">
+                          🎉 체크된 인원 전원 8교시 출석!
+                        </span>
                       ) : (
                         Object.entries(dailySummary.p8ReasonCounts).map(([reason, cnt]) => (
                           <span
@@ -1495,16 +1710,25 @@ export default function HomePage() {
                       <span className="text-xs font-extrabold text-emerald-800">
                         🍀 9교시 (17:20 ~ 18:10 · 50분)
                       </span>
-                      <span className="text-base font-black text-emerald-600">
+                      <span className="text-sm sm:text-base font-black text-emerald-600">
                         출석 {dailySummary.p9Present}명{' '}
                         <span className="text-xs font-bold text-rose-500">
                           / 불참 {dailySummary.p9Absent}명
+                        </span>{' '}
+                        <span className="text-xs font-semibold text-slate-400">
+                          (미체크 {dailySummary.p9Unchecked}명)
                         </span>
                       </span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-bold">
-                      {Object.entries(dailySummary.p9ReasonCounts).length === 0 ? (
-                        <span className="text-emerald-600">🎉 전원 9교시 출석!</span>
+                      {dailySummary.p9Present === 0 && dailySummary.p9Absent === 0 ? (
+                        <span className="text-slate-400">
+                          아직 9교시 출석 체크 전이에요 (또는 초기화됨)
+                        </span>
+                      ) : Object.entries(dailySummary.p9ReasonCounts).length === 0 ? (
+                        <span className="text-emerald-600">
+                          🎉 체크된 인원 전원 9교시 출석!
+                        </span>
                       ) : (
                         Object.entries(dailySummary.p9ReasonCounts).map(([reason, cnt]) => (
                           <span
@@ -1521,33 +1745,47 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* 일별 출석 누적 기록 상태 바 & 기록 완료된 날짜 바로가기 */}
+            {/* 일별 출석 누적 기록 상태 바 & 출석 초기화/취소 컨트롤 바 */}
             <div className="bg-white rounded-3xl p-4 sm:p-5 shadow-sm border-2 border-amber-200 flex flex-col gap-3 no-print">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   {isSelectedDateSaved ? (
                     <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-black">
-                      ✅ {selectedDate} 출석 기록 완료 (주간·월간 누적 자습시간에 합산됨)
+                      ✅ {selectedDate} 출석 기록됨 (선택된 버튼을 한 번 더 누르거나 [✕ 취소]를 누르면 출석이 취소돼요!)
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-xs font-black">
-                      💡 {selectedDate} 아직 미기록 상태 (학생 버튼을 클릭하거나 [전체 출석표 저장 ✨]을 누르면 전 학생 출석이 누적 합산돼요!)
+                      💡 {selectedDate} 미기록 상태 (학생별 버튼을 누르거나 [🌱 8·9교시 전원 출석]을 눌러 출석을 기록하세요!)
                     </span>
                   )}
                 </div>
 
-                <div className="flex items-center gap-2">
-                  {isSelectedDateSaved && (
-                    <button
-                      type="button"
-                      disabled={savingAttendance}
-                      onClick={() => handleResetDailyAttendance(selectedDate)}
-                      className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-extrabold flex items-center gap-1 transition"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      이 날짜 출석 기록 초기화
-                    </button>
-                  )}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={savingAttendance}
+                    onClick={() => handleResetDailyAttendance(selectedDate, 'period8')}
+                    className="px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-extrabold transition"
+                  >
+                    🔄 8교시 전체 취소
+                  </button>
+                  <button
+                    type="button"
+                    disabled={savingAttendance}
+                    onClick={() => handleResetDailyAttendance(selectedDate, 'period9')}
+                    className="px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-extrabold transition"
+                  >
+                    🔄 9교시 전체 취소
+                  </button>
+                  <button
+                    type="button"
+                    disabled={savingAttendance}
+                    onClick={() => handleResetDailyAttendance(selectedDate, 'all')}
+                    className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-extrabold flex items-center gap-1 transition"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    {selectedDate} 출석 전체 초기화
+                  </button>
                 </div>
               </div>
 
@@ -1557,22 +1795,38 @@ export default function HomePage() {
                 </span>
                 {recordedDates.length === 0 ? (
                   <span className="text-slate-400 font-semibold">
-                    아직 기록된 날짜가 없어요. 오늘 출석을 저장하면 여기에 날짜별로 차곡차곡 쌓입니다!
+                    아직 기록된 날짜가 없어요. 오늘 출석을 체크하면 여기에 날짜별로 차곡차곡 쌓입니다!
                   </span>
                 ) : (
                   recordedDates.map((dStr) => (
-                    <button
+                    <span
                       key={dStr}
-                      type="button"
-                      onClick={() => handleDateChange(dStr)}
-                      className={`px-3 py-1 rounded-full font-extrabold transition border ${
+                      className={`inline-flex items-center gap-1 pl-3 pr-1.5 py-1 rounded-full font-extrabold transition border ${
                         dStr === selectedDate
                           ? 'bg-emerald-500 text-white border-emerald-600 shadow-sm'
                           : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
                       }`}
                     >
-                      ✓ {dStr.slice(5)}
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDateChange(dStr)}
+                        className="hover:underline"
+                      >
+                        ✓ {dStr.slice(5)}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleResetDailyAttendance(dStr, 'all')}
+                        className={`w-4 h-4 rounded-full inline-flex items-center justify-center text-[10px] transition ${
+                          dStr === selectedDate
+                            ? 'bg-emerald-600 hover:bg-rose-500 text-white'
+                            : 'bg-emerald-200/80 hover:bg-rose-500 text-emerald-900 hover:text-white'
+                        }`}
+                        title={`${dStr} 출석 기록 전체 취소(초기화)`}
+                      >
+                        ×
+                      </button>
+                    </span>
                   ))
                 )}
               </div>
@@ -1588,19 +1842,35 @@ export default function HomePage() {
                       오후 자습 출석표 (불참 시 사유작성)
                     </h2>
                     <p className="text-xs font-bold text-slate-600 mt-0.5">
-                      📅 {selectedDate} · 버튼을 톡 누르면 해당 날짜 전체 학생의 출결이 DB에 자동 저장되어 월 누적 시간에 차곡차곡 더해져요!
+                      📅 {selectedDate} · 이미 선택된 버튼을 한 번 더 누르거나 [✕ 취소] / [↩️ 출석취소]를 누르면 즉시 출석이 취소돼요!
                     </p>
                   </div>
                 </div>
-                {role === 'teacher' && (
+                <div className="flex flex-wrap items-center gap-2 no-print">
                   <button
                     type="button"
-                    onClick={() => setActiveTab('admin')}
-                    className="px-3.5 py-2 rounded-2xl bg-white hover:bg-rose-50 text-rose-600 text-xs font-extrabold border-2 border-rose-200 shadow-sm transition no-print"
+                    onClick={() => handleMarkAllPresent('all')}
+                    className="px-3.5 py-2 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-extrabold shadow-sm transition"
                   >
-                    + 학생 명단 / 불참 사유 관리 👩‍🏫
+                    🌱 전원 출석 일괄 체크
                   </button>
-                )}
+                  <button
+                    type="button"
+                    onClick={() => handleResetDailyAttendance(selectedDate, 'all')}
+                    className="px-3.5 py-2 rounded-2xl bg-white hover:bg-rose-50 text-rose-600 text-xs font-extrabold border-2 border-rose-200 shadow-sm transition"
+                  >
+                    🔄 오늘 출석 전체 초기화
+                  </button>
+                  {role === 'teacher' && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('admin')}
+                      className="px-3.5 py-2 rounded-2xl bg-white hover:bg-amber-50 text-amber-900 text-xs font-extrabold border-2 border-amber-200 shadow-sm transition"
+                    >
+                      + 학생 명단 / 사유 관리 👩‍🏫
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="overflow-x-auto">
@@ -1613,33 +1883,76 @@ export default function HomePage() {
                       <th className="py-3.5 px-3 border-r border-amber-100 w-36 text-center">
                         ⏱️ {Number(selectedMonth.split('-')[1])}월 누적 시간
                       </th>
-                      <th className="py-3.5 px-4 border-r border-amber-100 text-center">
-                        8교시{' '}
-                        <span className="text-xs font-bold text-amber-700">
-                          (16:20~17:10)
-                        </span>
+                      <th className="py-3 px-4 border-r border-amber-100 text-center">
+                        <div className="flex flex-col items-center gap-1">
+                          <div>
+                            8교시{' '}
+                            <span className="text-xs font-bold text-amber-700">
+                              (16:20~17:10)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 no-print">
+                            <button
+                              type="button"
+                              onClick={() => handleMarkAllPresent(8)}
+                              className="px-2 py-0.5 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[10px] font-black transition"
+                            >
+                              🌱 8교시 전원출석
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleResetDailyAttendance(selectedDate, 'period8')}
+                              className="px-2 py-0.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-700 text-[10px] font-black transition"
+                            >
+                              🔄 8교시 초기화
+                            </button>
+                          </div>
+                        </div>
                       </th>
-                      <th className="py-3.5 px-4 border-r border-amber-100 text-center">
-                        9교시{' '}
-                        <span className="text-xs font-bold text-rose-600">
-                          (17:20~18:10)
-                        </span>
+                      <th className="py-3 px-4 border-r border-amber-100 text-center">
+                        <div className="flex flex-col items-center gap-1">
+                          <div>
+                            9교시{' '}
+                            <span className="text-xs font-bold text-rose-600">
+                              (17:20~18:10)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 no-print">
+                            <button
+                              type="button"
+                              onClick={() => handleMarkAllPresent(9)}
+                              className="px-2 py-0.5 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[10px] font-black transition"
+                            >
+                              🍀 9교시 전원출석
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleResetDailyAttendance(selectedDate, 'period9')}
+                              className="px-2 py-0.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-700 text-[10px] font-black transition"
+                            >
+                              🔄 9교시 초기화
+                            </button>
+                          </div>
+                        </div>
                       </th>
-                      <th className="py-3.5 px-4 w-56 text-center no-print">
-                        ✏️ 한줄 메모 (기타 사유 등)
+                      <th className="py-3.5 px-4 w-64 text-center no-print">
+                        ✏️ 한줄 메모 & 개별 출석취소
                       </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-amber-100/80">
                     {students.map((st) => {
                       const row = dailyDraft[st.id] || {
-                        period8Status: '출석',
+                        period8Status: '',
                         period8Note: '',
-                        period9Status: '출석',
+                        period9Status: '',
                         period9Note: '',
                       };
                       const stStat = statsByStudentId.get(st.id);
                       const options = ['출석', ...reasons.map((r) => r.label)];
+                      const hasAnyStatus = Boolean(
+                        row.period8Status || row.period9Status || row.period8Note
+                      );
 
                       return (
                         <tr
@@ -1679,16 +1992,20 @@ export default function HomePage() {
                           {/* 8교시 칸 */}
                           <td className="py-2.5 px-3 border-r border-amber-100 text-center">
                             {excelCompactMode ? (
-                              <span
-                                className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-extrabold ${
-                                  row.period8Status === '출석'
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-rose-100 text-rose-700'
-                                }`}
-                              >
-                                {getReasonEmoji(row.period8Status)}{' '}
-                                {row.period8Status === '출석' ? '출석' : row.period8Status}
-                              </span>
+                              !row.period8Status ? (
+                                <span className="text-xs font-bold text-slate-300">-</span>
+                              ) : (
+                                <span
+                                  className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-extrabold ${
+                                    row.period8Status === '출석'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : 'bg-rose-100 text-rose-700'
+                                  }`}
+                                >
+                                  {getReasonEmoji(row.period8Status)}{' '}
+                                  {row.period8Status === '출석' ? '출석' : row.period8Status}
+                                </span>
+                              )
                             ) : (
                               <div className="flex flex-wrap items-center justify-center gap-1.5">
                                 {options.map((opt) => {
@@ -1699,6 +2016,11 @@ export default function HomePage() {
                                       key={opt}
                                       type="button"
                                       onClick={() => handleSelectPeriodStatus(st.id, 8, opt)}
+                                      title={
+                                        selected
+                                          ? '다시 클릭하면 8교시 출석/사유가 취소됩니다'
+                                          : `${opt} 선택`
+                                      }
                                       className={`px-3 py-1.5 rounded-full text-xs font-extrabold transition border ${
                                         selected
                                           ? isPresent
@@ -1711,6 +2033,16 @@ export default function HomePage() {
                                     </button>
                                   );
                                 })}
+                                {row.period8Status && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectPeriodStatus(st.id, 8, '')}
+                                    className="px-2.5 py-1.5 rounded-full text-[11px] font-black bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 border border-slate-200 hover:border-rose-300 transition"
+                                    title="8교시 출석/사유 취소"
+                                  >
+                                    ✕ 취소
+                                  </button>
+                                )}
                               </div>
                             )}
                           </td>
@@ -1718,16 +2050,20 @@ export default function HomePage() {
                           {/* 9교시 칸 */}
                           <td className="py-2.5 px-3 border-r border-amber-100 text-center">
                             {excelCompactMode ? (
-                              <span
-                                className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-extrabold ${
-                                  row.period9Status === '출석'
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-rose-100 text-rose-700'
-                                }`}
-                              >
-                                {getReasonEmoji(row.period9Status)}{' '}
-                                {row.period9Status === '출석' ? '출석' : row.period9Status}
-                              </span>
+                              !row.period9Status ? (
+                                <span className="text-xs font-bold text-slate-300">-</span>
+                              ) : (
+                                <span
+                                  className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-extrabold ${
+                                    row.period9Status === '출석'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : 'bg-rose-100 text-rose-700'
+                                  }`}
+                                >
+                                  {getReasonEmoji(row.period9Status)}{' '}
+                                  {row.period9Status === '출석' ? '출석' : row.period9Status}
+                                </span>
+                              )
                             ) : (
                               <div className="flex flex-wrap items-center justify-center gap-1.5">
                                 {options.map((opt) => {
@@ -1738,6 +2074,11 @@ export default function HomePage() {
                                       key={opt}
                                       type="button"
                                       onClick={() => handleSelectPeriodStatus(st.id, 9, opt)}
+                                      title={
+                                        selected
+                                          ? '다시 클릭하면 9교시 출석/사유가 취소됩니다'
+                                          : `${opt} 선택`
+                                      }
                                       className={`px-3 py-1.5 rounded-full text-xs font-extrabold transition border ${
                                         selected
                                           ? isPresent
@@ -1750,30 +2091,55 @@ export default function HomePage() {
                                     </button>
                                   );
                                 })}
+                                {row.period9Status && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectPeriodStatus(st.id, 9, '')}
+                                    className="px-2.5 py-1.5 rounded-full text-[11px] font-black bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 border border-slate-200 hover:border-rose-300 transition"
+                                    title="9교시 출석/사유 취소"
+                                  >
+                                    ✕ 취소
+                                  </button>
+                                )}
                               </div>
                             )}
                           </td>
 
-                          {/* 상세 메모 칸 */}
+                          {/* 상세 메모 & 개별 학생 당일 출석취소 칸 */}
                           <td className="py-2 px-3 no-print">
-                            <input
-                              type="text"
-                              value={row.period8Note}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setDailyDraft((prev) => ({
-                                  ...prev,
-                                  [st.id]: {
-                                    ...row,
-                                    period8Note: val,
-                                    period9Note: val,
-                                  },
-                                }));
-                              }}
-                              onBlur={handleSaveAllDailyAttendance}
-                              placeholder="상세 사유 메모 ✏️"
-                              className="w-full px-3 py-1.5 text-xs font-medium rounded-xl border border-amber-200/80 bg-amber-50/20 focus:bg-white focus:ring-2 focus:ring-amber-300 focus:outline-none"
-                            />
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="text"
+                                value={row.period8Note}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDailyDraft((prev) => ({
+                                    ...prev,
+                                    [st.id]: {
+                                      ...row,
+                                      period8Note: val,
+                                      period9Note: val,
+                                    },
+                                  }));
+                                }}
+                                onBlur={handleSaveAllDailyAttendance}
+                                placeholder="상세 사유 메모 ✏️"
+                                className="flex-1 min-w-0 px-3 py-1.5 text-xs font-medium rounded-xl border border-amber-200/80 bg-amber-50/20 focus:bg-white focus:ring-2 focus:ring-amber-300 focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleCancelStudentDailyAttendance(st.id, st.name)}
+                                disabled={!hasAnyStatus}
+                                className={`px-2.5 py-1.5 rounded-xl text-[11px] font-black whitespace-nowrap border transition ${
+                                  hasAnyStatus
+                                    ? 'bg-rose-50 hover:bg-rose-100 text-rose-600 border-rose-200'
+                                    : 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed'
+                                }`}
+                                title={`${st.name} 학생의 오늘(8·9교시) 출석 기록 취소`}
+                              >
+                                ↩️ 출석취소
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -2313,7 +2679,18 @@ export default function HomePage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 no-print">
+              <div className="flex flex-wrap items-center gap-2 no-print">
+                {recordedDates.length > 0 && (
+                  <button
+                    type="button"
+                    disabled={savingAttendance}
+                    onClick={() => handleResetMonthlyAttendance()}
+                    className="px-3.5 py-2 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-extrabold flex items-center gap-1 transition"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    {selectedMonth} 전체 출석 초기화
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => shiftMonth(-1)}
@@ -2349,7 +2726,7 @@ export default function HomePage() {
                       <th className="py-3.5 px-4 text-center">총 참여 교시</th>
                       <th className="py-3.5 px-4 text-left">⏱️ 월 누적 자습시간 (1교시=50분)</th>
                       <th className="py-3.5 px-4 text-left">불참 사유별 횟수</th>
-                      <th className="py-3.5 px-4 text-center no-print">상세 기록</th>
+                      <th className="py-3.5 px-4 text-center no-print">상세 기록 / 초기화</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-emerald-100">
@@ -2412,13 +2789,30 @@ export default function HomePage() {
                           </div>
                         </td>
                         <td className="py-3.5 px-4 text-center no-print">
-                          <button
-                            type="button"
-                            onClick={() => setDetailStudentId(stat.student.id)}
-                            className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-extrabold border border-amber-200 transition"
-                          >
-                            🔍 결석일자 보기 ({stat.absenceHistory.length}건)
-                          </button>
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setDetailStudentId(stat.student.id)}
+                              className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-extrabold border border-amber-200 transition"
+                            >
+                              🔍 결석보기 ({stat.absenceHistory.length}건)
+                            </button>
+                            {stat.recordsCount > 0 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleResetMonthlyAttendance(
+                                    stat.student.id,
+                                    stat.student.name
+                                  )
+                                }
+                                className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-extrabold border border-rose-200 transition"
+                                title={`${stat.student.name} 학생의 ${selectedMonth} 출석 기록 초기화`}
+                              >
+                                🔄 초기화
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -2438,7 +2832,7 @@ export default function HomePage() {
                     </span>
                   </h3>
                   <p className="text-xs font-semibold text-slate-500 mt-0.5">
-                    매일 기록한 8교시·9교시 출석 상태가 날짜별로 차곡차곡 누적된 표입니다. 날짜 머리글을 클릭하면 해당 날짜 출석표로 바로 이동해요!
+                    매일 기록한 8교시·9교시 출석 상태가 날짜별로 차곡차곡 누적된 표입니다. 날짜 머리글의 [× 취소]를 누르면 해당 날짜 출석을 초기화할 수 있어요!
                   </p>
                 </div>
               </div>
@@ -2458,14 +2852,29 @@ export default function HomePage() {
                         {recordedDates.map((dStr) => (
                           <th
                             key={dStr}
-                            onClick={() => {
-                              handleDateChange(dStr);
-                              setActiveTab('attendance');
-                            }}
-                            className="py-2.5 px-2.5 text-center border-r border-amber-100 cursor-pointer hover:bg-amber-200/60 transition whitespace-nowrap"
-                            title={`${dStr} 출석표로 이동`}
+                            className="py-2 px-2.5 text-center border-r border-amber-100 whitespace-nowrap"
                           >
-                            <div className="font-black text-amber-950">{dStr.slice(5)}</div>
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleDateChange(dStr);
+                                  setActiveTab('attendance');
+                                }}
+                                className="font-black text-amber-950 hover:underline"
+                                title={`${dStr} 출석표로 이동`}
+                              >
+                                {dStr.slice(5)}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleResetDailyAttendance(dStr, 'all')}
+                                className="px-1.5 py-0.5 rounded bg-rose-100 hover:bg-rose-500 text-rose-600 hover:text-white text-[10px] font-black transition no-print"
+                                title={`${dStr} 출석 전체 취소`}
+                              >
+                                ×취소
+                              </button>
+                            </div>
                             <div className="text-[10px] font-semibold text-amber-700">8교시 / 9교시</div>
                           </th>
                         ))}
