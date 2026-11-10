@@ -31,6 +31,7 @@ supabase/.temp
 auth.json
 credentials.json
 .dorms-check*
+dorms-check.config.json
 
 # typescript
 *.tsbuildinfo
