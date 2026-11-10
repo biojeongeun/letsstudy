@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createScopedSupabase, getServerSession } from '@/lib/supabase';
+import { createAdminSupabase, createScopedSupabase, getServerSession } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
     const { action } = body;
     const scoped = createScopedSupabase(session.accessToken);
 
-    // 1. 출석 체크 저장 (감독관 & 교사 모두 가능)
+    // 1. 출석 체크 저장 (감독관 & 교사 모두 가능 — 일부 학생만 클릭해도 해당 날짜 전체 학생의 기본 '출석'이 함께 기록되어 일별 누적이 누락되지 않도록 처리)
     if (action === 'upsert_attendance') {
       const { studyDate, records } = body;
       if (!studyDate || !Array.isArray(records) || records.length === 0) {
@@ -112,26 +112,58 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const payload = records.map(
-        (r: {
-          studentId: string;
-          period8Status?: string;
-          period8Note?: string;
-          period9Status?: string;
-          period9Note?: string;
-        }) => ({
+      const [activeStudentsRes, existingDateAttRes] = await Promise.all([
+        scoped
+          .from('students')
+          .select('id')
+          .eq('classroom_id', session.classroomId)
+          .eq('is_active', true),
+        scoped
+          .from('attendance_records')
+          .select('student_id, period8_status, period8_note, period9_status, period9_note')
+          .eq('classroom_id', session.classroomId)
+          .eq('study_date', studyDate),
+      ]);
+
+      const existingMap = new Map(
+        (existingDateAttRes.data || []).map((r) => [r.student_id, r])
+      );
+      const incomingMap = new Map(
+        records.map(
+          (r: {
+            studentId: string;
+            period8Status?: string;
+            period8Note?: string;
+            period9Status?: string;
+            period9Note?: string;
+          }) => [r.studentId, r]
+        )
+      );
+
+      const nowIso = new Date().toISOString();
+      const allStudentIds = Array.from(
+        new Set([
+          ...(activeStudentsRes.data || []).map((s) => s.id),
+          ...Array.from(incomingMap.keys()),
+        ])
+      );
+
+      const payload = allStudentIds.map((studentId) => {
+        const inc = incomingMap.get(studentId);
+        const ex = existingMap.get(studentId);
+        return {
           classroom_id: session.classroomId,
           owner_id: session.ownerId,
-          student_id: r.studentId,
+          student_id: studentId,
           study_date: studyDate,
-          period8_status: r.period8Status || '출석',
-          period8_note: r.period8Note ?? '',
-          period9_status: r.period9Status || '출석',
-          period9_note: r.period9Note ?? '',
+          period8_status: inc?.period8Status || ex?.period8_status || '출석',
+          period8_note: inc?.period8Note ?? ex?.period8_note ?? '',
+          period9_status: inc?.period9Status || ex?.period9_status || '출석',
+          period9_note: inc?.period9Note ?? ex?.period9_note ?? '',
           updated_by_role: session.role,
-          updated_at: new Date().toISOString(),
-        })
-      );
+          updated_at: nowIso,
+        };
+      });
 
       const { data, error } = await scoped
         .from('attendance_records')
@@ -144,7 +176,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, records: data });
     }
 
-    // 2. 감독 확인표 서명 및 특이사항 보고 (감독관 & 교사 모두 가능)
+    // 1-1. 특정 날짜의 출석 기록 초기화 (휴일 등 잘못 체크한 날짜의 누적 기록 제거)
+    if (action === 'reset_daily_attendance') {
+      const { studyDate } = body;
+      if (!studyDate) {
+        return NextResponse.json({ error: '초기화할 날짜가 필요합니다.' }, { status: 400 });
+      }
+
+      const admin = createAdminSupabase();
+      const { error } = await admin
+        .from('attendance_records')
+        .delete()
+        .eq('classroom_id', session.classroomId)
+        .eq('study_date', studyDate);
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    // 2. 감독 확인표 서명 및 특이사항 보고 (감독관 & 교사 모두 가능 — 서명 시 해당 날짜 출석표가 아직 미저장 상태라면 전원 출석 기준으로 자동 누적 저장)
     if (action === 'sign_confirmation') {
       const {
         studyDate,
@@ -157,6 +209,40 @@ export async function POST(req: NextRequest) {
 
       if (!studyDate) {
         return NextResponse.json({ error: '날짜가 필요합니다.' }, { status: 400 });
+      }
+
+      // 해당 날짜에 아직 저장된 출석 기록이 없으면 활성 학생 전원을 기본 '출석'으로 자동 생성하여 일별 누적 보장
+      const { data: existingAtt } = await scoped
+        .from('attendance_records')
+        .select('id')
+        .eq('classroom_id', session.classroomId)
+        .eq('study_date', studyDate)
+        .limit(1);
+
+      if (!existingAtt || existingAtt.length === 0) {
+        const { data: activeStudents } = await scoped
+          .from('students')
+          .select('id')
+          .eq('classroom_id', session.classroomId)
+          .eq('is_active', true);
+
+        if (activeStudents && activeStudents.length > 0) {
+          const autoAttPayload = activeStudents.map((st) => ({
+            classroom_id: session.classroomId,
+            owner_id: session.ownerId,
+            student_id: st.id,
+            study_date: studyDate,
+            period8_status: '출석',
+            period8_note: '',
+            period9_status: '출석',
+            period9_note: '',
+            updated_by_role: session.role,
+            updated_at: new Date().toISOString(),
+          }));
+          await scoped
+            .from('attendance_records')
+            .upsert(autoAttPayload, { onConflict: 'student_id,study_date' });
+        }
       }
 
       const { data: existing } = await scoped

@@ -586,18 +586,37 @@ export default function HomePage() {
       });
       if (res.ok) {
         const data = await res.json();
-        const savedRecord = data.records?.[0];
-        if (savedRecord) {
+        const savedRecords = data.records || [];
+        if (savedRecords.length > 0) {
           setMonthAttendance((prev) => {
-            const filtered = prev.filter(
-              (r) => !(r.student_id === studentId && r.study_date === selectedDate)
-            );
-            return [...filtered, savedRecord];
+            const filtered = prev.filter((r) => r.study_date !== selectedDate);
+            return [...filtered, ...savedRecords];
           });
         }
       }
     } catch {
       // ignore transient error
+    }
+  };
+
+  // 특정 날짜의 출석 기록 초기화 핸들러
+  const handleResetDailyAttendance = async (targetDate: string) => {
+    setSavingAttendance(true);
+    try {
+      const res = await fetch('/api/study', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'reset_daily_attendance',
+          studyDate: targetDate,
+        }),
+      });
+      if (res.ok) {
+        await fetchStudyData(selectedMonth, selectedDate);
+        showToast(`🔄 ${targetDate} 출석 기록이 초기화되어 누적 시간에서 제외되었어요.`);
+      }
+    } finally {
+      setSavingAttendance(false);
     }
   };
 
@@ -895,6 +914,26 @@ export default function HomePage() {
     () => new Map(monthConfirmations.map((c) => [c.study_date, c])),
     [monthConfirmations]
   );
+
+  const recordedDates = useMemo(
+    () => Array.from(new Set(monthAttendance.map((r) => r.study_date))).sort(),
+    [monthAttendance]
+  );
+  const isSelectedDateSaved = useMemo(
+    () => recordedDates.includes(selectedDate),
+    [recordedDates, selectedDate]
+  );
+  const statsByStudentId = useMemo(
+    () => new Map(studentMonthlyStats.map((s) => [s.student.id, s])),
+    [studentMonthlyStats]
+  );
+  const attendanceByStudentAndDate = useMemo(() => {
+    const map = new Map<string, AttendanceRecord>();
+    for (const r of monthAttendance) {
+      map.set(`${r.student_id}_${r.study_date}`, r);
+    }
+    return map;
+  }, [monthAttendance]);
 
   const selectedDetailStat = useMemo(
     () => studentMonthlyStats.find((s) => s.student.id === detailStudentId) || null,
@@ -1412,6 +1451,63 @@ export default function HomePage() {
               </div>
             </div>
 
+            {/* 일별 출석 누적 기록 상태 바 & 기록 완료된 날짜 바로가기 */}
+            <div className="bg-white rounded-3xl p-4 sm:p-5 shadow-sm border-2 border-amber-200 flex flex-col gap-3 no-print">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {isSelectedDateSaved ? (
+                    <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-black">
+                      ✅ {selectedDate} 출석 기록 완료 (주간·월간 누적 자습시간에 합산됨)
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-xs font-black">
+                      💡 {selectedDate} 아직 미기록 상태 (학생 버튼을 클릭하거나 [전체 출석표 저장 ✨]을 누르면 전 학생 출석이 누적 합산돼요!)
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {isSelectedDateSaved && (
+                    <button
+                      type="button"
+                      disabled={savingAttendance}
+                      onClick={() => handleResetDailyAttendance(selectedDate)}
+                      className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-extrabold flex items-center gap-1 transition"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      이 날짜 출석 기록 초기화
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-amber-100 text-xs">
+                <span className="font-extrabold text-slate-600 mr-1">
+                  📅 {selectedMonth} 출석 누적 기록된 날 ({recordedDates.length}일):
+                </span>
+                {recordedDates.length === 0 ? (
+                  <span className="text-slate-400 font-semibold">
+                    아직 기록된 날짜가 없어요. 오늘 출석을 저장하면 여기에 날짜별로 차곡차곡 쌓입니다!
+                  </span>
+                ) : (
+                  recordedDates.map((dStr) => (
+                    <button
+                      key={dStr}
+                      type="button"
+                      onClick={() => handleDateChange(dStr)}
+                      className={`px-3 py-1 rounded-full font-extrabold transition border ${
+                        dStr === selectedDate
+                          ? 'bg-emerald-500 text-white border-emerald-600 shadow-sm'
+                          : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                      }`}
+                    >
+                      ✓ {dStr.slice(5)}
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+
             {/* 첨부 사진 2번 스타일: 밝고 귀여운 오후 자습 출석표 (불참 시 사유작성) */}
             <div className="bg-white rounded-3xl shadow-[0_10px_35px_rgb(0,0,0,0.04)] border-2 border-amber-200 overflow-hidden">
               <div className="bg-gradient-to-r from-[#FFF6CC] via-[#FFF0D4] to-[#FFE8EC] border-b-2 border-amber-200 px-6 py-4 flex flex-wrap items-center justify-between gap-2">
@@ -1422,8 +1518,7 @@ export default function HomePage() {
                       오후 자습 출석표 (불참 시 사유작성)
                     </h2>
                     <p className="text-xs font-bold text-slate-600 mt-0.5">
-                      📅 {selectedDate} · 버튼을 톡 누르면 출석 또는 불참 사유(
-                      {reasons.map((r) => r.label).join(', ')})가 바로 저장돼요!
+                      📅 {selectedDate} · 버튼을 톡 누르면 해당 날짜 전체 학생의 출결이 DB에 자동 저장되어 월 누적 시간에 차곡차곡 더해져요!
                     </p>
                   </div>
                 </div>
@@ -1442,8 +1537,11 @@ export default function HomePage() {
                 <table className="w-full border-collapse text-sm">
                   <thead>
                     <tr className="bg-amber-50/70 border-b-2 border-amber-200 text-slate-800 font-extrabold">
-                      <th className="py-3.5 px-4 border-r border-amber-100 w-40 text-center">
+                      <th className="py-3.5 px-4 border-r border-amber-100 w-36 text-center">
                         🐣 학생 이름
+                      </th>
+                      <th className="py-3.5 px-3 border-r border-amber-100 w-36 text-center">
+                        ⏱️ {Number(selectedMonth.split('-')[1])}월 누적 시간
                       </th>
                       <th className="py-3.5 px-4 border-r border-amber-100 text-center">
                         8교시{' '}
@@ -1457,7 +1555,7 @@ export default function HomePage() {
                           (17:20~18:10)
                         </span>
                       </th>
-                      <th className="py-3.5 px-4 w-60 text-center no-print">
+                      <th className="py-3.5 px-4 w-56 text-center no-print">
                         ✏️ 한줄 메모 (기타 사유 등)
                       </th>
                     </tr>
@@ -1470,6 +1568,7 @@ export default function HomePage() {
                         period9Status: '출석',
                         period9Note: '',
                       };
+                      const stStat = statsByStudentId.get(st.id);
                       const options = ['출석', ...reasons.map((r) => r.label)];
 
                       return (
@@ -1488,6 +1587,22 @@ export default function HomePage() {
                                 {st.student_number}
                               </span>
                               <span>{st.name}</span>
+                            </button>
+                          </td>
+
+                          {/* 실시간 월 누적 자습시간 칸 */}
+                          <td className="py-2.5 px-3 border-r border-amber-100 text-center whitespace-nowrap bg-amber-50/20">
+                            <button
+                              type="button"
+                              onClick={() => setDetailStudentId(st.id)}
+                              className="inline-flex flex-col items-center"
+                            >
+                              <span className="text-xs font-black text-emerald-700">
+                                {formatMinutesToKorean(stStat?.totalMinutes || 0)}
+                              </span>
+                              <span className="text-[10px] font-bold text-slate-400">
+                                누적 {stStat?.totalAttendedPeriods || 0}교시
+                              </span>
                             </button>
                           </td>
 
@@ -2240,6 +2355,102 @@ export default function HomePage() {
                   </tbody>
                 </table>
               </div>
+            </div>
+
+            {/* 일자별·주간별 출석 누적 기록 매트릭스 (담임교사가 다음 날이나 주중에 날짜별 누적 상태를 한눈에 확인) */}
+            <div className="bg-white rounded-3xl p-6 shadow-sm border-2 border-amber-200 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-base font-black text-slate-800 flex items-center gap-2">
+                    <span>📅</span>
+                    <span>
+                      {selectedMonth} 날짜별 출석 누적 기록표 (총 {recordedDates.length}일 기록됨)
+                    </span>
+                  </h3>
+                  <p className="text-xs font-semibold text-slate-500 mt-0.5">
+                    매일 기록한 8교시·9교시 출석 상태가 날짜별로 차곡차곡 누적된 표입니다. 날짜 머리글을 클릭하면 해당 날짜 출석표로 바로 이동해요!
+                  </p>
+                </div>
+              </div>
+
+              {recordedDates.length === 0 ? (
+                <div className="p-8 rounded-2xl bg-amber-50/50 border border-amber-200 text-center text-xs font-bold text-slate-500">
+                  아직 {selectedMonth}에 저장된 일별 출석 기록이 없습니다. [1. 오후 자습 출석표]에서 출석을 체크하거나 저장하면 날짜별로 누적 표시됩니다!
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-amber-50/80 border-b-2 border-amber-200 text-slate-800 font-extrabold">
+                        <th className="py-2.5 px-3 text-left sticky left-0 bg-amber-50 z-10 border-r border-amber-200 w-32">
+                          학생 (누적시간)
+                        </th>
+                        {recordedDates.map((dStr) => (
+                          <th
+                            key={dStr}
+                            onClick={() => {
+                              handleDateChange(dStr);
+                              setActiveTab('attendance');
+                            }}
+                            className="py-2.5 px-2.5 text-center border-r border-amber-100 cursor-pointer hover:bg-amber-200/60 transition whitespace-nowrap"
+                            title={`${dStr} 출석표로 이동`}
+                          >
+                            <div className="font-black text-amber-950">{dStr.slice(5)}</div>
+                            <div className="text-[10px] font-semibold text-amber-700">8교시 / 9교시</div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-amber-100">
+                      {studentMonthlyStats.map((stat) => (
+                        <tr key={stat.student.id} className="hover:bg-amber-50/30">
+                          <td className="py-2.5 px-3 font-extrabold text-slate-800 sticky left-0 bg-white z-10 border-r border-amber-200 whitespace-nowrap">
+                            <div>
+                              {stat.student.student_number}. {stat.student.name}
+                            </div>
+                            <div className="text-[10px] font-black text-emerald-600">
+                              {formatMinutesToKorean(stat.totalMinutes)}
+                            </div>
+                          </td>
+                          {recordedDates.map((dStr) => {
+                            const rec = attendanceByStudentAndDate.get(
+                              `${stat.student.id}_${dStr}`
+                            );
+                            const p8 = rec?.period8_status || '-';
+                            const p9 = rec?.period9_status || '-';
+                            return (
+                              <td
+                                key={dStr}
+                                className="py-2 px-2 text-center border-r border-amber-50 whitespace-nowrap"
+                              >
+                                <span
+                                  className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-extrabold ${
+                                    p8 === '출석'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : 'bg-rose-100 text-rose-700'
+                                  }`}
+                                >
+                                  {p8 === '출석' ? '🌱출석' : p8}
+                                </span>
+                                <span className="mx-0.5 text-slate-300">/</span>
+                                <span
+                                  className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-extrabold ${
+                                    p9 === '출석'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : 'bg-rose-100 text-rose-700'
+                                  }`}
+                                >
+                                  {p9 === '출석' ? '🍀출석' : p9}
+                                </span>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}
