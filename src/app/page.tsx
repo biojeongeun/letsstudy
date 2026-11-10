@@ -2,13 +2,17 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  AlertCircle,
+  Award,
   BookOpen,
   Calendar,
+  Check,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock,
   FileSpreadsheet,
+  Heart,
   KeyRound,
   LogOut,
   Plus,
@@ -17,13 +21,11 @@ import {
   Save,
   ShieldCheck,
   Sparkles,
+  Star,
   Trash2,
   UserCheck,
   UserPlus,
   Users,
-  AlertCircle,
-  Award,
-  Check,
   X,
 } from 'lucide-react';
 
@@ -72,6 +74,16 @@ type ActiveTab = 'attendance' | 'supervisor_sheet' | 'monthly_stats' | 'admin';
 
 const MINUTES_PER_PERIOD = 50; // 8교시(16:20~17:10) 50분, 9교시(17:20~18:10) 50분
 
+function getReasonEmoji(label: string): string {
+  if (label === '출석') return '🌱';
+  if (label.includes('학원')) return '🏫';
+  if (label.includes('병원')) return '🏥';
+  if (label.includes('동아리')) return '🎨';
+  if (label.includes('하브루타')) return '💬';
+  if (label.includes('기타')) return '📝';
+  return '📌';
+}
+
 function formatLocalDate(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -91,7 +103,9 @@ function formatMinutesToKorean(totalMinutes: number): string {
 /**
  * 선택한 월(YYYY-MM)의 평일(월~금)을 주차별 5칸 배열로 반환 (첨부 사진 1번 '오후 자습 감독 확인표' 레이아웃)
  */
-function getMonthWeekdayWeeks(monthStr: string): Array<Array<{ dateStr: string; label: string } | null>> {
+function getMonthWeekdayWeeks(
+  monthStr: string
+): Array<Array<{ dateStr: string; label: string } | null>> {
   const match = /^(\d{4})-(\d{2})$/.exec(monthStr);
   const now = new Date();
   const year = match ? Number(match[1]) : now.getFullYear();
@@ -99,7 +113,13 @@ function getMonthWeekdayWeeks(monthStr: string): Array<Array<{ dateStr: string; 
   const lastDay = new Date(year, month, 0).getDate();
 
   const weeks: Array<Array<{ dateStr: string; label: string } | null>> = [];
-  let currentWeek: Array<{ dateStr: string; label: string } | null> = [null, null, null, null, null];
+  let currentWeek: Array<{ dateStr: string; label: string } | null> = [
+    null,
+    null,
+    null,
+    null,
+    null,
+  ];
   let hasWeekdayInCurrentWeek = false;
 
   for (let d = 1; d <= lastDay; d++) {
@@ -473,7 +493,7 @@ export default function HomePage() {
       setSetupTeacherPassword('');
       setSetupSupervisorPassword('');
       await checkAuth();
-      showToast('학급 초기 설정이 완료되었습니다! 담임교사 관리자 모드로 시작합니다.');
+      showToast('🎉 학급 초기 설정이 완료되었어요! 담임선생님 모드로 시작합니다.');
     } finally {
       setAuthSubmitting(false);
     }
@@ -504,8 +524,8 @@ export default function HomePage() {
       await checkAuth();
       showToast(
         loginMode === 'teacher'
-          ? '담임교사(관리자) 모드로 로그인되었습니다.'
-          : `${data.supervisorName || '오후 자습 감독관'} 모드로 로그인되었습니다.`
+          ? '🌷 담임선생님(관리자) 모드로 로그인되었습니다!'
+          : `🐣 ${data.supervisorName || '오후 자습 감독관'}님, 오늘도 반가워요!`
       );
     } finally {
       setAuthSubmitting(false);
@@ -546,7 +566,6 @@ export default function HomePage() {
       [studentId]: updated,
     }));
 
-    // 서버에 즉시 반영
     try {
       const res = await fetch('/api/study', {
         method: 'POST',
@@ -578,7 +597,7 @@ export default function HomePage() {
         }
       }
     } catch {
-      // ignore transient error; user can also click bulk save
+      // ignore transient error
     }
   };
 
@@ -615,7 +634,7 @@ export default function HomePage() {
       const data = await res.json();
       if (res.ok) {
         await fetchStudyData(selectedMonth, selectedDate);
-        showToast(`${selectedDate} 오후 자습(8·9교시) 출석표가 저장되었습니다!`);
+        showToast(`✨ ${selectedDate} 오후 자습(8·9교시) 출석표가 깔끔하게 저장되었어요!`);
       } else {
         showToast(data.error || '출석 저장 중 오류가 발생했습니다.');
       }
@@ -643,7 +662,7 @@ export default function HomePage() {
       }
       return next;
     });
-    showToast('8교시 출결 상태를 9교시로 복사했습니다. [전체 출석표 저장]을 눌러 확정하세요.');
+    showToast('🐰 8교시 출결 상태를 9교시로 똑같이 복사했어요! [전체 출석표 저장]을 눌러주세요.');
   };
 
   // 감독 확인표 서명 저장 핸들러
@@ -669,7 +688,7 @@ export default function HomePage() {
       const data = await res.json();
       if (res.ok) {
         await fetchStudyData(selectedMonth, selectedDate);
-        showToast(`${signingDate} 오후 자습 감독 확인표(8·9교시 서명)가 기록되었습니다!`);
+        showToast(`💮 ${signingDate} 오후 자습 감독 확인표 서명이 완료되었어요!`);
       } else {
         showToast(data.error || '서명 저장 실패');
       }
@@ -693,8 +712,8 @@ export default function HomePage() {
       await fetchStudyData(selectedMonth, selectedDate);
       showToast(
         nextConfirmed
-          ? `${targetDate} 자습 감독표를 담임선생님 확인 완료 처리했습니다.`
-          : `${targetDate} 담임선생님 확인을 취소했습니다.`
+          ? `💮 ${targetDate} 자습 감독표에 담임선생님 확인 도장을 찍었어요!`
+          : `${targetDate} 담임선생님 확인 도장을 취소했어요.`
       );
     }
   };
@@ -717,7 +736,7 @@ export default function HomePage() {
       setNewStudentName('');
       setNewStudentNumber('');
       await fetchStudyData(selectedMonth, selectedDate);
-      showToast(`학생 "${data.student?.name}"이(가) 명단에 추가되었습니다.`);
+      showToast(`🌱 학생 "${data.student?.name}" 친구가 명단에 추가되었어요!`);
     } else {
       showToast(data.error || '학생 추가 실패');
     }
@@ -740,7 +759,7 @@ export default function HomePage() {
     if (res.ok) {
       setBulkStudentsText('');
       await fetchStudyData(selectedMonth, selectedDate);
-      showToast(`총 ${data.students?.length || 0}명의 학생 명단이 등록되었습니다.`);
+      showToast(`✨ 총 ${data.students?.length || 0}명의 학생 명단이 등록되었어요!`);
     } else {
       showToast(data.error || '일괄 등록 실패');
     }
@@ -778,7 +797,7 @@ export default function HomePage() {
     if (res.ok) {
       setNewReasonLabel('');
       await fetchStudyData(selectedMonth, selectedDate);
-      showToast(`불참 사유 "${data.reason?.label}"이(가) 추가되었습니다.`);
+      showToast(`📌 불참 사유 "${data.reason?.label}"이(가) 추가되었어요!`);
     } else {
       showToast(data.error || '사유 추가 실패');
     }
@@ -818,7 +837,7 @@ export default function HomePage() {
       setAdminNewSupervisorPw('');
       setAdminNewTeacherPw('');
       setClassName(adminClassName);
-      showToast('학급 이름 및 비밀번호 설정이 저장되었습니다.');
+      showToast('🌷 학급 이름 및 비밀번호 설정이 저장되었어요!');
     } else {
       showToast(data.error || '설정 변경 실패');
     }
@@ -837,56 +856,71 @@ export default function HomePage() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white">
-        <div className="flex flex-col items-center gap-3">
-          <RefreshCw className="w-8 h-8 animate-spin text-amber-400" />
-          <p className="text-sm font-medium text-slate-300">
-            오후 자습 출석 & 감독 시스템을 불러오는 중입니다...
+      <div className="min-h-screen flex items-center justify-center pastel-grid-bg">
+        <div className="bg-white/90 backdrop-blur px-8 py-7 rounded-3xl shadow-[0_12px_40px_rgba(251,191,36,0.18)] border-2 border-amber-200 flex flex-col items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-amber-100 flex items-center justify-center text-2xl animate-bounce">
+            🐣
+          </div>
+          <RefreshCw className="w-5 h-5 animate-spin text-amber-500" />
+          <p className="text-sm font-bold text-slate-700">
+            우리 반 오후 자습 플래너를 불러오는 중이에요...
           </p>
         </div>
       </div>
     );
   }
 
-  // 비로그인 상태 화면 (초기 설정 또는 감독관/담임교사 비밀번호 로그인)
+  // 비로그인 상태 화면 (밝고 깨끗하고 귀여운 파스텔 스터디 플래너 감성)
   if (!authenticated) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex flex-col justify-center items-center p-4">
-        <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
-          <div className="bg-amber-400 px-6 py-5 border-b-2 border-slate-900">
-            <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-slate-900 text-amber-300">
-                <BookOpen className="w-3.5 h-3.5" /> 독학자습 관리 시스템
+      <div className="min-h-screen pastel-grid-bg flex flex-col justify-center items-center p-4 relative overflow-hidden">
+        {/* 귀여운 배경 파스텔 버블 장식 */}
+        <div className="w-72 h-72 rounded-full bg-amber-200/40 blur-3xl absolute -top-16 -left-16 pointer-events-none" />
+        <div className="w-80 h-80 rounded-full bg-rose-200/40 blur-3xl absolute -bottom-20 -right-16 pointer-events-none" />
+        <div className="w-64 h-64 rounded-full bg-sky-200/35 blur-3xl absolute top-1/4 right-10 pointer-events-none" />
+
+        <div className="w-full max-w-lg bg-white/95 backdrop-blur-md rounded-[2rem] shadow-[0_20px_60px_rgba(245,158,11,0.14)] border-2 border-amber-200/90 overflow-hidden relative z-10">
+          {/* 상단 파스텔 버터-피치 헤더 */}
+          <div className="bg-gradient-to-r from-[#FFF3B0] via-[#FFE5B4] to-[#FFD6E0] px-7 py-6 border-b-2 border-amber-200/80">
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-white/90 text-amber-800 shadow-sm border border-amber-200">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" /> 우리반 독학자습 플래너
               </span>
-              <span className="text-xs font-bold text-slate-800">
-                8교시(16:20~17:10) · 9교시(17:20~18:10)
+              <span className="px-2.5 py-1 rounded-full bg-white/75 text-[11px] font-bold text-rose-800">
+                ⏰ 8교시 16:20 · 9교시 17:20
               </span>
             </div>
-            <h1 className="mt-2 text-2xl font-black text-slate-950 tracking-tight">
-              {className} 출석 & 감독 확인표
-            </h1>
-            <p className="mt-1 text-xs font-semibold text-slate-800">
-              오후 자습 감독관 또는 담임교사(관리자) 비밀번호로 로그인하세요.
-            </p>
+            <div className="mt-3 flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-white shadow-sm border border-amber-200 flex items-center justify-center text-2xl shrink-0">
+                ✏️
+              </div>
+              <div>
+                <h1 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">
+                  {className}
+                </h1>
+                <p className="text-xs font-bold text-slate-600 mt-0.5">
+                  오후 자습 출석체크 & 감독 확인 시스템 🌱
+                </p>
+              </div>
+            </div>
           </div>
 
-          <div className="p-6">
+          <div className="p-7">
             {!initialized ? (
               <form onSubmit={handleInitialSetup} className="space-y-4">
-                <div className="p-3.5 rounded-xl bg-indigo-50 border border-indigo-200 text-xs text-indigo-950 space-y-1">
-                  <p className="font-bold flex items-center gap-1.5 text-indigo-900">
-                    <Sparkles className="w-4 h-4 text-indigo-600" />
-                    첫 접속 환영합니다! 우리 반 초기 비밀번호를 설정해 주세요.
+                <div className="p-4 rounded-2xl bg-amber-50/90 border-2 border-amber-200/80 text-xs text-slate-700 space-y-1.5">
+                  <p className="font-extrabold flex items-center gap-1.5 text-amber-900 text-sm">
+                    <span>🐣</span> 선생님, 첫 방문을 환영해요!
                   </p>
-                  <p className="text-indigo-700 leading-relaxed">
-                    담임선생님용 관리자 비밀번호와 오후 자습 감독관 학생들이 함께 사용할 비밀번호를 지정하면,
-                    기본 결석 사유(학원·병원·동아리·하브루타·기타)와 학급 출석부가 즉시 생성됩니다.
+                  <p className="text-slate-600 leading-relaxed font-medium">
+                    선생님용 <strong>관리자 비밀번호</strong>와 자습 감독관 학생들이 함께 쓸{' '}
+                    <strong>감독관 비밀번호</strong>를 설정해 주시면 기본 불참 사유(학원·병원·동아리·하브루타·기타)와 출석부가 바로 만들어집니다.
                   </p>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    학급 명칭
+                  <label className="block text-xs font-extrabold text-slate-700 mb-1.5">
+                    🏫 우리 반 학급 이름
                   </label>
                   <input
                     type="text"
@@ -894,13 +928,13 @@ export default function HomePage() {
                     value={setupClassName}
                     onChange={(e) => setSetupClassName(e.target.value)}
                     placeholder="예: 2학년 3반 오후 자습"
-                    className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-600 focus:outline-none"
+                    className="w-full px-4 py-3 rounded-2xl border-2 border-amber-200/90 bg-amber-50/30 text-sm font-bold text-slate-800 focus:ring-2 focus:ring-amber-400 focus:border-amber-400 focus:bg-white focus:outline-none transition"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    담임교사(관리자) 비밀번호 지정 (4자 이상)
+                  <label className="block text-xs font-extrabold text-slate-700 mb-1.5">
+                    👩‍🏫 담임교사(관리자) 비밀번호 지정 (4자 이상)
                   </label>
                   <input
                     type="password"
@@ -909,13 +943,13 @@ export default function HomePage() {
                     value={setupTeacherPassword}
                     onChange={(e) => setSetupTeacherPassword(e.target.value)}
                     placeholder="선생님만 사용할 관리자 비밀번호 입력"
-                    className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-600 focus:outline-none"
+                    className="w-full px-4 py-3 rounded-2xl border-2 border-rose-200/90 bg-rose-50/20 text-sm font-medium focus:ring-2 focus:ring-rose-400 focus:border-rose-400 focus:bg-white focus:outline-none transition"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    오후 자습 감독관 공유 비밀번호 지정 (4자 이상)
+                  <label className="block text-xs font-extrabold text-slate-700 mb-1.5">
+                    📋 오후 자습 감독관 공유 비밀번호 지정 (4자 이상)
                   </label>
                   <input
                     type="password"
@@ -924,13 +958,13 @@ export default function HomePage() {
                     value={setupSupervisorPassword}
                     onChange={(e) => setSetupSupervisorPassword(e.target.value)}
                     placeholder="자습 감독관 학생들이 로그인할 비밀번호 입력"
-                    className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-600 focus:outline-none"
+                    className="w-full px-4 py-3 rounded-2xl border-2 border-emerald-200/90 bg-emerald-50/20 text-sm font-medium focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 focus:bg-white focus:outline-none transition"
                   />
                 </div>
 
                 {authError && (
-                  <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700 flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0" />
+                  <div className="p-3.5 rounded-2xl bg-rose-50 border-2 border-rose-200 text-xs font-bold text-rose-700 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
                     <span>{authError}</span>
                   </div>
                 )}
@@ -938,30 +972,30 @@ export default function HomePage() {
                 <button
                   type="submit"
                   disabled={authSubmitting}
-                  className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400 hover:from-amber-500 hover:to-rose-500 text-white font-black text-sm shadow-[0_8px_20px_rgba(251,146,60,0.35)] transition flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  <ShieldCheck className="w-4 h-4" />
-                  {authSubmitting ? '학급 자습실 생성 중...' : '우리 반 자습 시스템 시작하기'}
+                  <Sparkles className="w-4 h-4" />
+                  {authSubmitting ? '우리 반 자습실 준비 중...' : '우리 반 자습 시스템 시작하기 ✨'}
                 </button>
               </form>
             ) : (
               <div className="space-y-5">
-                {/* 역할 선택 탭 */}
-                <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl">
+                {/* 귀여운 파스텔 역할 선택 탭 */}
+                <div className="grid grid-cols-2 gap-2 p-1.5 bg-amber-50/90 border-2 border-amber-100 rounded-2xl">
                   <button
                     type="button"
                     onClick={() => {
                       setLoginMode('supervisor');
                       setAuthError('');
                     }}
-                    className={`py-2.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                    className={`py-2.5 px-3 rounded-xl text-xs font-extrabold transition flex items-center justify-center gap-1.5 ${
                       loginMode === 'supervisor'
-                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/80'
-                        : 'text-slate-600 hover:text-slate-900'
+                        ? 'bg-white text-amber-900 shadow-sm border border-amber-200'
+                        : 'text-slate-500 hover:text-slate-800'
                     }`}
                   >
-                    <UserCheck className="w-4 h-4 text-amber-600" />
-                    오후 자습 감독관 로그인
+                    <span>🐣</span>
+                    오후 자습 감독관
                   </button>
                   <button
                     type="button"
@@ -969,41 +1003,41 @@ export default function HomePage() {
                       setLoginMode('teacher');
                       setAuthError('');
                     }}
-                    className={`py-2.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                    className={`py-2.5 px-3 rounded-xl text-xs font-extrabold transition flex items-center justify-center gap-1.5 ${
                       loginMode === 'teacher'
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'text-slate-600 hover:text-slate-900'
+                        ? 'bg-rose-400 text-white shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800'
                     }`}
                   >
-                    <ShieldCheck className="w-4 h-4" />
-                    담임교사(관리자) 로그인
+                    <span>👩‍🏫</span>
+                    담임선생님 (관리자)
                   </button>
                 </div>
 
                 <form onSubmit={handleLogin} className="space-y-4">
                   {loginMode === 'supervisor' && (
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        오늘의 감독관 이름 (서명란 자동 입력용 · 선택)
+                      <label className="block text-xs font-extrabold text-slate-700 mb-1.5">
+                        ✍️ 오늘의 감독관 이름 (서명란 자동 입력 · 선택)
                       </label>
                       <input
                         type="text"
                         value={loginSupervisorName}
                         onChange={(e) => setLoginSupervisorName(e.target.value)}
-                        placeholder="예: 홍길동 (감독관 서명에 사용됩니다)"
-                        className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                        placeholder="예: 김민지 (확인표 서명에 자동으로 들어가요)"
+                        className="w-full px-4 py-3 rounded-2xl border-2 border-amber-200 bg-amber-50/20 text-sm font-semibold focus:ring-2 focus:ring-amber-400 focus:bg-white focus:outline-none transition"
                       />
                     </div>
                   )}
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                    <label className="block text-xs font-extrabold text-slate-700 mb-1.5">
                       {loginMode === 'supervisor'
-                        ? '오후 자습 감독관 비밀번호'
-                        : '담임교사(관리자) 비밀번호'}
+                        ? '🔑 오후 자습 감독관 비밀번호'
+                        : '🔑 담임교사(관리자) 비밀번호'}
                     </label>
                     <div className="relative">
-                      <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                      <KeyRound className="w-4 h-4 text-amber-500 absolute left-4 top-3.5" />
                       <input
                         type="password"
                         required
@@ -1011,17 +1045,17 @@ export default function HomePage() {
                         onChange={(e) => setLoginPassword(e.target.value)}
                         placeholder={
                           loginMode === 'supervisor'
-                            ? '감독관 공유 비밀번호를 입력하세요'
-                            : '담임교사 관리자 비밀번호를 입력하세요'
+                            ? '감독관 공유 비밀번호를 입력해 주세요'
+                            : '담임선생님 관리자 비밀번호를 입력해 주세요'
                         }
-                        className="w-full pl-10 pr-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-600 focus:outline-none"
+                        className="w-full pl-11 pr-4 py-3 rounded-2xl border-2 border-amber-200 bg-amber-50/20 text-sm font-semibold focus:ring-2 focus:ring-amber-400 focus:bg-white focus:outline-none transition"
                       />
                     </div>
                   </div>
 
                   {authError && (
-                    <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700 flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0" />
+                    <div className="p-3.5 rounded-2xl bg-rose-50 border-2 border-rose-200 text-xs font-bold text-rose-700 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
                       <span>{authError}</span>
                     </div>
                   )}
@@ -1029,29 +1063,29 @@ export default function HomePage() {
                   <button
                     type="submit"
                     disabled={authSubmitting}
-                    className={`w-full py-3 rounded-xl font-bold text-sm shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 ${
+                    className={`w-full py-3.5 rounded-2xl font-black text-sm shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 ${
                       loginMode === 'supervisor'
-                        ? 'bg-slate-900 hover:bg-slate-800 text-amber-300'
-                        : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                        ? 'bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-500 hover:to-orange-500 text-white shadow-amber-200'
+                        : 'bg-gradient-to-r from-rose-400 to-pink-500 hover:from-rose-500 hover:to-pink-600 text-white shadow-rose-200'
                     }`}
                   >
                     {loginMode === 'supervisor' ? (
                       <>
                         <UserCheck className="w-4 h-4" />
-                        {authSubmitting ? '확인 중...' : '감독관 출석체크 화면 입장'}
+                        {authSubmitting ? '입장 중...' : '감독관 출석체크 시작하기 🐣'}
                       </>
                     ) : (
                       <>
                         <ShieldCheck className="w-4 h-4" />
-                        {authSubmitting ? '확인 중...' : '담임교사 관리자 화면 입장'}
+                        {authSubmitting ? '입장 중...' : '담임교사 관리 화면 입장하기 🌷'}
                       </>
                     )}
                   </button>
                 </form>
 
-                <div className="pt-3 border-t border-slate-200 text-[11px] text-slate-600 space-y-1">
-                  <p>* 오후 자습 감독관은 매일 오후 자습 시작 전 칠판에 교내 인원을 적고 출석체크 표에 체크합니다.</p>
-                  <p>* 9교시 종료 직후 감독 확인표에 서명하고 다음 날 아침 담임선생님께 확인받습니다.</p>
+                <div className="p-3.5 rounded-2xl bg-sky-50/80 border border-sky-100 text-[11px] text-slate-600 space-y-1 font-medium">
+                  <p>🌿 오후 자습 감독관은 자습 시작 전 교내 인원을 칠판에 적고 출석체크 표에 체크해요.</p>
+                  <p>🌿 9교시가 끝난 직후 확인표에 서명하고 다음 날 아침 담임선생님께 확인받아요.</p>
                 </div>
               </div>
             )}
@@ -1062,42 +1096,42 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-100">
-      {/* 토스트 알림 */}
+    <div className="min-h-screen flex flex-col pastel-grid-bg text-slate-800">
+      {/* 귀여운 파스텔 토스트 알림 */}
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 max-w-md bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl border border-amber-400/50 flex items-center gap-2.5 text-xs font-bold animate-bounce no-print">
-          <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
+        <div className="fixed bottom-6 right-6 z-50 max-w-md bg-white text-slate-800 px-5 py-3.5 rounded-2xl shadow-[0_12px_35px_rgba(244,114,182,0.25)] border-2 border-rose-300 flex items-center gap-2.5 text-xs font-extrabold animate-bounce no-print">
+          <span className="text-lg">✨</span>
           <span>{toastMessage}</span>
         </div>
       )}
 
-      {/* 상단 네비게이션 헤더 */}
-      <header className="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-30 no-print">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      {/* 밝고 깨끗한 상단 파스텔 헤더 */}
+      <header className="bg-white/95 backdrop-blur-md border-b-2 border-amber-100 sticky top-0 z-30 shadow-[0_4px_20px_rgba(251,191,36,0.08)] no-print">
+        <div className="max-w-7xl mx-auto px-4 py-3.5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-black text-lg shadow">
-              自
+            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-200 via-yellow-200 to-rose-200 border-2 border-amber-300 flex items-center justify-center text-xl shadow-sm">
+              ✏️
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-base sm:text-lg font-extrabold tracking-tight text-white">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-base sm:text-lg font-black tracking-tight text-slate-800">
                   {className}
                 </h1>
                 <span
-                  className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                  className={`px-3 py-0.5 rounded-full text-xs font-extrabold border ${
                     role === 'teacher'
-                      ? 'bg-indigo-500/30 text-indigo-200 border border-indigo-400/40'
-                      : 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
+                      ? 'bg-rose-50 text-rose-700 border-rose-200'
+                      : 'bg-amber-50 text-amber-800 border-amber-200'
                   }`}
                 >
                   {role === 'teacher'
-                    ? '👨‍🏫 담임교사(관리자)'
-                    : `📋 오후 자습 감독관 (${supervisorName || '근무중'})`}
+                    ? '👩‍🏫 담임선생님 (관리자)'
+                    : `🐣 오후 자습 감독관 (${supervisorName || '열공중'})`}
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
-                8교시 <strong className="text-amber-300">16:20~17:10 (50분)</strong> · 9교시{' '}
-                <strong className="text-amber-300">17:20~18:10 (50분)</strong> 독학자습 출석 관리
+              <p className="text-xs text-slate-500 font-semibold mt-0.5">
+                8교시 <strong className="text-amber-700">16:20~17:10 (50분)</strong> · 9교시{' '}
+                <strong className="text-rose-600">17:20~18:10 (50분)</strong> 우리 반 자습 플래너
               </p>
             </div>
           </div>
@@ -1106,61 +1140,61 @@ export default function HomePage() {
             <button
               type="button"
               onClick={() => window.print()}
-              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 border border-slate-700"
+              className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-extrabold flex items-center gap-1.5 border border-amber-200 transition"
             >
-              <Printer className="w-3.5 h-3.5" />
-              화면 인쇄
+              <Printer className="w-3.5 h-3.5 text-amber-600" />
+              깔끔 인쇄
             </button>
             <button
               type="button"
               onClick={handleLogout}
-              className="px-3 py-1.5 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-200 text-xs font-semibold flex items-center gap-1.5 border border-rose-500/30"
+              className="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-extrabold flex items-center gap-1.5 border border-rose-200 transition"
             >
-              <LogOut className="w-3.5 h-3.5" />
+              <LogOut className="w-3.5 h-3.5 text-rose-500" />
               로그아웃
             </button>
           </div>
         </div>
 
-        {/* 메인 기능 탭 바 */}
-        <div className="bg-slate-950/60 border-t border-slate-800">
-          <div className="max-w-7xl mx-auto px-4 flex overflow-x-auto gap-1 py-1.5">
+        {/* 밝고 동글동글한 파스텔 탭 메뉴 */}
+        <div className="bg-gradient-to-r from-amber-50/70 via-rose-50/50 to-sky-50/70 border-t border-amber-100">
+          <div className="max-w-7xl mx-auto px-4 flex overflow-x-auto gap-2 py-2">
             <button
               type="button"
               onClick={() => setActiveTab('attendance')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition flex items-center gap-1.5 ${
+              className={`px-4 py-2 rounded-2xl text-xs font-extrabold whitespace-nowrap transition flex items-center gap-1.5 ${
                 activeTab === 'attendance'
-                  ? 'bg-amber-400 text-slate-950 shadow'
-                  : 'text-slate-300 hover:bg-slate-800'
+                  ? 'bg-amber-300 text-amber-950 shadow-sm border border-amber-400/60'
+                  : 'bg-white/80 text-slate-600 hover:bg-white hover:text-slate-900 border border-amber-100'
               }`}
             >
-              <FileSpreadsheet className="w-4 h-4" />
+              <span>📋</span>
               1. 오후 자습 출석표 (8·9교시 체크)
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('supervisor_sheet')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition flex items-center gap-1.5 ${
+              className={`px-4 py-2 rounded-2xl text-xs font-extrabold whitespace-nowrap transition flex items-center gap-1.5 ${
                 activeTab === 'supervisor_sheet'
-                  ? 'bg-amber-400 text-slate-950 shadow'
-                  : 'text-slate-300 hover:bg-slate-800'
+                  ? 'bg-amber-300 text-amber-950 shadow-sm border border-amber-400/60'
+                  : 'bg-white/80 text-slate-600 hover:bg-white hover:text-slate-900 border border-amber-100'
               }`}
             >
-              <Calendar className="w-4 h-4" />
+              <span>🗓️</span>
               2. 오후 자습 감독 확인표 (월간 서명표)
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('monthly_stats')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition flex items-center gap-1.5 ${
+              className={`px-4 py-2 rounded-2xl text-xs font-extrabold whitespace-nowrap transition flex items-center gap-1.5 ${
                 activeTab === 'monthly_stats'
-                  ? 'bg-amber-400 text-slate-950 shadow'
-                  : 'text-slate-300 hover:bg-slate-800'
+                  ? 'bg-emerald-300 text-emerald-950 shadow-sm border border-emerald-400/60'
+                  : 'bg-white/80 text-slate-600 hover:bg-white hover:text-slate-900 border border-amber-100'
               }`}
             >
-              <Clock className="w-4 h-4" />
+              <span>⏱️</span>
               3. 월별 학생 누적 자습시간 & 통계
             </button>
 
@@ -1168,13 +1202,13 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={() => setActiveTab('admin')}
-                className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition flex items-center gap-1.5 ${
+                className={`px-4 py-2 rounded-2xl text-xs font-extrabold whitespace-nowrap transition flex items-center gap-1.5 ${
                   activeTab === 'admin'
-                    ? 'bg-indigo-500 text-white shadow'
-                    : 'text-indigo-300 hover:bg-slate-800'
+                    ? 'bg-rose-400 text-white shadow-sm border border-rose-500/40'
+                    : 'bg-white/80 text-rose-600 hover:bg-rose-50 border border-rose-200'
                 }`}
               >
-                <ShieldCheck className="w-4 h-4" />
+                <span>👩‍🏫</span>
                 4. 담임교사 관리 (명단·사유·결석조회·비밀번호)
               </button>
             )}
@@ -1187,23 +1221,22 @@ export default function HomePage() {
         {/* ==================== TAB 1: 오후 자습 출석표 (불참 시 사유작성) ==================== */}
         {activeTab === 'attendance' && (
           <div className="space-y-6">
-            {/* 상단 독학재수학원 스타일 칠판 전광판 & 날짜 컨트롤 */}
+            {/* 상단 날짜 선택 카드 & 파스텔 민트 칠판 현황판 */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 no-print">
-              <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-col justify-between">
+              <div className="bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-2 border-amber-200/80 flex flex-col justify-between">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-500 flex items-center gap-1.5">
-                    <Calendar className="w-4 h-4 text-indigo-600" />
-                    출석체크 일자 선택
+                  <span className="text-xs font-extrabold text-amber-800 flex items-center gap-1.5">
+                    <span>📅</span> 출석체크 날짜 선택
                   </span>
                   {dataLoading && (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-400" />
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-500" />
                   )}
                 </div>
                 <div className="my-3 flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => shiftDateByDays(-1)}
-                    className="p-2 rounded-lg border border-slate-200 hover:bg-slate-100"
+                    className="p-2.5 rounded-2xl bg-amber-50 border border-amber-200 hover:bg-amber-100 text-amber-800 transition"
                     title="이전 날짜"
                   >
                     <ChevronLeft className="w-4 h-4" />
@@ -1212,12 +1245,12 @@ export default function HomePage() {
                     type="date"
                     value={selectedDate}
                     onChange={(e) => handleDateChange(e.target.value)}
-                    className="flex-1 px-3 py-2 rounded-xl border border-slate-300 font-extrabold text-sm text-center focus:ring-2 focus:ring-indigo-600 focus:outline-none"
+                    className="flex-1 px-3 py-2.5 rounded-2xl border-2 border-amber-200 bg-amber-50/30 font-black text-sm text-slate-800 text-center focus:ring-2 focus:ring-amber-400 focus:outline-none"
                   />
                   <button
                     type="button"
                     onClick={() => shiftDateByDays(1)}
-                    className="p-2 rounded-lg border border-slate-200 hover:bg-slate-100"
+                    className="p-2.5 rounded-2xl bg-amber-50 border border-amber-200 hover:bg-amber-100 text-amber-800 transition"
                     title="다음 날짜"
                   >
                     <ChevronRight className="w-4 h-4" />
@@ -1227,102 +1260,102 @@ export default function HomePage() {
                   <button
                     type="button"
                     onClick={() => handleDateChange(formatLocalDate(new Date()))}
-                    className="text-xs font-bold text-indigo-600 hover:underline"
+                    className="text-xs font-extrabold text-rose-500 hover:underline"
                   >
-                    오늘 날짜로 이동
+                    🎈 오늘 날짜로 이동
                   </button>
                   <button
                     type="button"
                     onClick={() => setExcelCompactMode((v) => !v)}
-                    className="text-xs font-bold px-2.5 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700"
+                    className="text-xs font-extrabold px-3 py-1.5 rounded-xl bg-amber-100/80 hover:bg-amber-200 text-amber-900 transition"
                   >
-                    {excelCompactMode ? '버튼형 체크 보기' : '엑셀 인쇄형 표 보기'}
+                    {excelCompactMode ? '🐣 귀여운 버튼형 보기' : '🖨️ 엑셀 인쇄형 표 보기'}
                   </button>
                 </div>
               </div>
 
-              {/* 칠판 게시용 8교시 / 9교시 재실 인원 현황 */}
-              <div className="lg:col-span-2 bg-emerald-950 text-white rounded-2xl p-5 shadow-md border-4 border-amber-700/80 flex flex-col justify-between">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-800 pb-2.5">
+              {/* 밝고 산뜻한 파스텔 민트-크림 칠판 인원 현황판 */}
+              <div className="lg:col-span-2 bg-gradient-to-br from-emerald-50 via-teal-50/80 to-amber-50 rounded-3xl p-5 shadow-[0_8px_30px_rgb(16,185,129,0.08)] border-2 border-emerald-200 flex flex-col justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-200/80 pb-3">
                   <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded bg-amber-400 text-slate-950 text-xs font-black">
-                      칠판 인원 현황판
+                    <span className="px-3 py-1 rounded-full bg-emerald-500 text-white text-xs font-black shadow-sm">
+                      🌿 오늘의 칠판 인원 현황판
                     </span>
-                    <span className="text-sm font-bold text-emerald-100">
-                      {selectedDate} 오후 자습 재실 인원 (총원 {dailySummary.total}명)
+                    <span className="text-sm font-extrabold text-emerald-950">
+                      {selectedDate} 자습 현황 (우리 반 총원 {dailySummary.total}명)
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={handleCopyPeriod8ToPeriod9}
-                      className="px-2.5 py-1 rounded-lg bg-emerald-800 hover:bg-emerald-700 text-emerald-100 text-xs font-bold transition"
+                      className="px-3 py-1.5 rounded-xl bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-extrabold transition shadow-sm"
                     >
-                      8교시 → 9교시 상태 복사
+                      🐰 8교시 → 9교시 복사
                     </button>
                     <button
                       type="button"
                       onClick={handleSaveAllDailyAttendance}
                       disabled={savingAttendance}
-                      className="px-3.5 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black flex items-center gap-1.5 shadow"
+                      className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-black flex items-center gap-1.5 shadow-sm transition"
                     >
                       <Save className="w-3.5 h-3.5" />
-                      {savingAttendance ? '저장 중...' : '전체 출석표 확정 저장'}
+                      {savingAttendance ? '저장 중...' : '전체 출석표 저장 ✨'}
                     </button>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3">
-                  <div className="bg-emerald-900/60 rounded-xl p-3 border border-emerald-800">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-3">
+                  <div className="bg-white/90 rounded-2xl p-3.5 border border-emerald-200 shadow-sm">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-300">
-                        8교시 (16:20 ~ 17:10 · 50분)
+                      <span className="text-xs font-extrabold text-emerald-800">
+                        🌱 8교시 (16:20 ~ 17:10 · 50분)
                       </span>
-                      <span className="text-lg font-black text-amber-300">
+                      <span className="text-base font-black text-emerald-600">
                         출석 {dailySummary.p8Present}명{' '}
-                        <span className="text-xs font-normal text-emerald-300">
+                        <span className="text-xs font-bold text-rose-500">
                           / 불참 {dailySummary.p8Absent}명
                         </span>
                       </span>
                     </div>
-                    <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] text-emerald-200">
+                    <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-bold">
                       {Object.entries(dailySummary.p8ReasonCounts).length === 0 ? (
-                        <span>전원 8교시 출석</span>
+                        <span className="text-emerald-600">🎉 전원 8교시 출석!</span>
                       ) : (
                         Object.entries(dailySummary.p8ReasonCounts).map(([reason, cnt]) => (
                           <span
                             key={reason}
-                            className="px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-700"
+                            className="px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200"
                           >
-                            {reason} {cnt}명
+                            {getReasonEmoji(reason)} {reason} {cnt}명
                           </span>
                         ))
                       )}
                     </div>
                   </div>
 
-                  <div className="bg-emerald-900/60 rounded-xl p-3 border border-emerald-800">
+                  <div className="bg-white/90 rounded-2xl p-3.5 border border-emerald-200 shadow-sm">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-300">
-                        9교시 (17:20 ~ 18:10 · 50분)
+                      <span className="text-xs font-extrabold text-emerald-800">
+                        🍀 9교시 (17:20 ~ 18:10 · 50분)
                       </span>
-                      <span className="text-lg font-black text-amber-300">
+                      <span className="text-base font-black text-emerald-600">
                         출석 {dailySummary.p9Present}명{' '}
-                        <span className="text-xs font-normal text-emerald-300">
+                        <span className="text-xs font-bold text-rose-500">
                           / 불참 {dailySummary.p9Absent}명
                         </span>
                       </span>
                     </div>
-                    <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] text-emerald-200">
+                    <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-bold">
                       {Object.entries(dailySummary.p9ReasonCounts).length === 0 ? (
-                        <span>전원 9교시 출석</span>
+                        <span className="text-emerald-600">🎉 전원 9교시 출석!</span>
                       ) : (
                         Object.entries(dailySummary.p9ReasonCounts).map(([reason, cnt]) => (
                           <span
                             key={reason}
-                            className="px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-700"
+                            className="px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200"
                           >
-                            {reason} {cnt}명
+                            {getReasonEmoji(reason)} {reason} {cnt}명
                           </span>
                         ))
                       )}
@@ -1332,25 +1365,28 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* 첨부 사진 2번 스타일: 오후 자습 출석표 (불참 시 사유작성) */}
-            <div className="bg-white rounded-2xl shadow-sm border-2 border-slate-900 overflow-hidden">
-              <div className="bg-slate-100 border-b-2 border-slate-900 px-6 py-4 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-lg sm:text-xl font-black text-slate-950">
-                    오후 자습 출석표 (불참 시 사유작성)
-                  </h2>
-                  <p className="text-xs font-semibold text-slate-600 mt-0.5">
-                    일자: {selectedDate} | 버튼을 누르면 즉시 출석 또는 불참 사유(
-                    {reasons.map((r) => r.label).join(', ')})가 체크됩니다.
-                  </p>
+            {/* 첨부 사진 2번 스타일: 밝고 귀여운 오후 자습 출석표 (불참 시 사유작성) */}
+            <div className="bg-white rounded-3xl shadow-[0_10px_35px_rgb(0,0,0,0.04)] border-2 border-amber-200 overflow-hidden">
+              <div className="bg-gradient-to-r from-[#FFF6CC] via-[#FFF0D4] to-[#FFE8EC] border-b-2 border-amber-200 px-6 py-4 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-2xl">📋</span>
+                  <div>
+                    <h2 className="text-lg sm:text-xl font-black text-slate-800">
+                      오후 자습 출석표 (불참 시 사유작성)
+                    </h2>
+                    <p className="text-xs font-bold text-slate-600 mt-0.5">
+                      📅 {selectedDate} · 버튼을 톡 누르면 출석 또는 불참 사유(
+                      {reasons.map((r) => r.label).join(', ')})가 바로 저장돼요!
+                    </p>
+                  </div>
                 </div>
                 {role === 'teacher' && (
                   <button
                     type="button"
                     onClick={() => setActiveTab('admin')}
-                    className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold border border-indigo-200 no-print"
+                    className="px-3.5 py-2 rounded-2xl bg-white hover:bg-rose-50 text-rose-600 text-xs font-extrabold border-2 border-rose-200 shadow-sm transition no-print"
                   >
-                    + 학생 명단 / 불참 사유 편집
+                    + 학생 명단 / 불참 사유 관리 👩‍🏫
                   </button>
                 )}
               </div>
@@ -1358,28 +1394,28 @@ export default function HomePage() {
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-sm">
                   <thead>
-                    <tr className="bg-slate-50 border-b-2 border-slate-900 text-slate-900 font-extrabold">
-                      <th className="py-3 px-4 border-r border-slate-300 w-36 text-center">
-                        학생 성명
+                    <tr className="bg-amber-50/70 border-b-2 border-amber-200 text-slate-800 font-extrabold">
+                      <th className="py-3.5 px-4 border-r border-amber-100 w-40 text-center">
+                        🐣 학생 이름
                       </th>
-                      <th className="py-3 px-4 border-r border-slate-300 text-center">
+                      <th className="py-3.5 px-4 border-r border-amber-100 text-center">
                         8교시{' '}
-                        <span className="text-xs font-semibold text-slate-600">
+                        <span className="text-xs font-bold text-amber-700">
                           (16:20~17:10)
                         </span>
                       </th>
-                      <th className="py-3 px-4 border-r border-slate-300 text-center">
+                      <th className="py-3.5 px-4 border-r border-amber-100 text-center">
                         9교시{' '}
-                        <span className="text-xs font-semibold text-slate-600">
+                        <span className="text-xs font-bold text-rose-600">
                           (17:20~18:10)
                         </span>
                       </th>
-                      <th className="py-3 px-4 w-56 text-center no-print">
-                        상세 메모 (기타 사유 등)
+                      <th className="py-3.5 px-4 w-60 text-center no-print">
+                        ✏️ 한줄 메모 (기타 사유 등)
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-300">
+                  <tbody className="divide-y divide-amber-100/80">
                     {students.map((st) => {
                       const row = dailyDraft[st.id] || {
                         period8Status: '출석',
@@ -1390,35 +1426,39 @@ export default function HomePage() {
                       const options = ['출석', ...reasons.map((r) => r.label)];
 
                       return (
-                        <tr key={st.id} className="hover:bg-slate-50/80 transition">
-                          <td className="py-2.5 px-4 border-r border-slate-300 font-bold text-slate-900 text-center whitespace-nowrap">
+                        <tr
+                          key={st.id}
+                          className="hover:bg-amber-50/40 transition"
+                        >
+                          <td className="py-3 px-4 border-r border-amber-100 font-extrabold text-slate-800 text-center whitespace-nowrap">
                             <button
                               type="button"
                               onClick={() => setDetailStudentId(st.id)}
-                              className="hover:text-indigo-600 hover:underline inline-flex items-center gap-1.5"
+                              className="hover:text-rose-500 inline-flex items-center gap-1.5 group"
                               title="클릭하여 월별 누적 자습시간 및 결석 이력 보기"
                             >
-                              <span className="text-xs text-slate-400 font-normal">
-                                {st.student_number}.
+                              <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-black inline-flex items-center justify-center group-hover:bg-rose-100 group-hover:text-rose-700 transition">
+                                {st.student_number}
                               </span>
                               <span>{st.name}</span>
                             </button>
                           </td>
 
                           {/* 8교시 칸 */}
-                          <td className="py-2.5 px-3 border-r border-slate-300 text-center">
+                          <td className="py-2.5 px-3 border-r border-amber-100 text-center">
                             {excelCompactMode ? (
                               <span
-                                className={`font-bold ${
+                                className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-extrabold ${
                                   row.period8Status === '출석'
-                                    ? 'text-emerald-700'
-                                    : 'text-rose-600'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-rose-100 text-rose-700'
                                 }`}
                               >
-                                {row.period8Status === '출석' ? 'O (출석)' : row.period8Status}
+                                {getReasonEmoji(row.period8Status)}{' '}
+                                {row.period8Status === '출석' ? '출석' : row.period8Status}
                               </span>
                             ) : (
-                              <div className="flex flex-wrap items-center justify-center gap-1">
+                              <div className="flex flex-wrap items-center justify-center gap-1.5">
                                 {options.map((opt) => {
                                   const selected = row.period8Status === opt;
                                   const isPresent = opt === '출석';
@@ -1427,15 +1467,15 @@ export default function HomePage() {
                                       key={opt}
                                       type="button"
                                       onClick={() => handleSelectPeriodStatus(st.id, 8, opt)}
-                                      className={`px-2.5 py-1 rounded-md text-xs font-bold transition border ${
+                                      className={`px-3 py-1.5 rounded-full text-xs font-extrabold transition border ${
                                         selected
                                           ? isPresent
-                                            ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm'
-                                            : 'bg-rose-600 text-white border-rose-700 shadow-sm'
-                                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                                            ? 'bg-emerald-400 text-white border-emerald-500 shadow-sm scale-105'
+                                            : 'bg-rose-400 text-white border-rose-500 shadow-sm scale-105'
+                                          : 'bg-white text-slate-500 border-slate-200 hover:border-amber-300 hover:bg-amber-50/50 hover:text-slate-800'
                                       }`}
                                     >
-                                      {opt}
+                                      {getReasonEmoji(opt)} {opt}
                                     </button>
                                   );
                                 })}
@@ -1444,19 +1484,20 @@ export default function HomePage() {
                           </td>
 
                           {/* 9교시 칸 */}
-                          <td className="py-2.5 px-3 border-r border-slate-300 text-center">
+                          <td className="py-2.5 px-3 border-r border-amber-100 text-center">
                             {excelCompactMode ? (
                               <span
-                                className={`font-bold ${
+                                className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-extrabold ${
                                   row.period9Status === '출석'
-                                    ? 'text-emerald-700'
-                                    : 'text-rose-600'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-rose-100 text-rose-700'
                                 }`}
                               >
-                                {row.period9Status === '출석' ? 'O (출석)' : row.period9Status}
+                                {getReasonEmoji(row.period9Status)}{' '}
+                                {row.period9Status === '출석' ? '출석' : row.period9Status}
                               </span>
                             ) : (
-                              <div className="flex flex-wrap items-center justify-center gap-1">
+                              <div className="flex flex-wrap items-center justify-center gap-1.5">
                                 {options.map((opt) => {
                                   const selected = row.period9Status === opt;
                                   const isPresent = opt === '출석';
@@ -1465,15 +1506,15 @@ export default function HomePage() {
                                       key={opt}
                                       type="button"
                                       onClick={() => handleSelectPeriodStatus(st.id, 9, opt)}
-                                      className={`px-2.5 py-1 rounded-md text-xs font-bold transition border ${
+                                      className={`px-3 py-1.5 rounded-full text-xs font-extrabold transition border ${
                                         selected
                                           ? isPresent
-                                            ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm'
-                                            : 'bg-rose-600 text-white border-rose-700 shadow-sm'
-                                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                                            ? 'bg-emerald-400 text-white border-emerald-500 shadow-sm scale-105'
+                                            : 'bg-rose-400 text-white border-rose-500 shadow-sm scale-105'
+                                          : 'bg-white text-slate-500 border-slate-200 hover:border-amber-300 hover:bg-amber-50/50 hover:text-slate-800'
                                       }`}
                                     >
-                                      {opt}
+                                      {getReasonEmoji(opt)} {opt}
                                     </button>
                                   );
                                 })}
@@ -1498,8 +1539,8 @@ export default function HomePage() {
                                 }));
                               }}
                               onBlur={handleSaveAllDailyAttendance}
-                              placeholder="상세 사유 메모 (선택)"
-                              className="w-full px-2.5 py-1 text-xs rounded border border-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                              placeholder="상세 사유 메모 ✏️"
+                              className="w-full px-3 py-1.5 text-xs font-medium rounded-xl border border-amber-200/80 bg-amber-50/20 focus:bg-white focus:ring-2 focus:ring-amber-300 focus:outline-none"
                             />
                           </td>
                         </tr>
@@ -1513,76 +1554,80 @@ export default function HomePage() {
             {/* 당일 오후 자습 감독관 서명 & 특이사항 보고 박스 */}
             <form
               onSubmit={handleSaveSupervisorConfirmation}
-              className="bg-white rounded-2xl p-6 shadow-sm border-2 border-amber-400 space-y-4 no-print"
+              className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-2 border-rose-200 space-y-4 no-print"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
-                    <UserCheck className="w-5 h-5 text-amber-600" />
-                    {signingDate} 오후 자습 감독관 확인 서명 & 담임선생님 보고
-                  </h3>
-                  <p className="text-xs text-slate-600">
-                    여기서 서명하면 [2. 오후 자습 감독 확인표(월간 서명표)]의 해당 날짜 8교시·9교시 확인란에 즉시 기록됩니다.
-                  </p>
+                <div className="flex items-center gap-2.5">
+                  <span className="w-10 h-10 rounded-2xl bg-rose-100 flex items-center justify-center text-xl">
+                    ✍️
+                  </span>
+                  <div>
+                    <h3 className="text-base font-black text-slate-800">
+                      {signingDate} 오후 자습 감독관 확인(서명) & 담임선생님 보고
+                    </h3>
+                    <p className="text-xs font-semibold text-slate-500">
+                      여기서 서명하면 [2. 오후 자습 감독 확인표]의 해당 날짜 8교시·9교시 확인란에 예쁘게 기록돼요!
+                    </p>
+                  </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setActiveTab('supervisor_sheet')}
-                  className="text-xs font-bold text-indigo-600 hover:underline"
+                  className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-xs font-extrabold text-amber-900 border border-amber-200"
                 >
-                  월간 감독 확인표 전체 보기 →
+                  🗓️ 월간 감독 확인표 전체 보기 →
                 </button>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 space-y-2">
-                  <label className="block text-xs font-extrabold text-slate-800">
-                    8교시 (16:20~17:10) 감독관 확인 서명
+                <div className="p-4 rounded-2xl bg-amber-50/60 border-2 border-amber-200/80 space-y-2">
+                  <label className="block text-xs font-extrabold text-amber-900">
+                    🌱 8교시 (16:20~17:10) 감독관 서명
                   </label>
                   <input
                     type="text"
                     value={signP8Name}
                     onChange={(e) => setSignP8Name(e.target.value)}
-                    placeholder="8교시 감독관 이름 입력 (예: 김OO)"
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-bold bg-white"
+                    placeholder="8교시 감독관 이름 입력"
+                    className="w-full px-3.5 py-2 rounded-xl border border-amber-200 text-sm font-bold bg-white focus:ring-2 focus:ring-amber-400 focus:outline-none"
                   />
-                  <div className="flex items-center justify-between text-xs text-slate-600">
-                    <span>8교시 교내 재실 인원:</span>
-                    <span className="font-bold text-emerald-700">
+                  <div className="flex items-center justify-between text-xs text-slate-600 font-semibold">
+                    <span>8교시 교실 내 인원:</span>
+                    <span className="font-extrabold text-emerald-600">
                       현재 {dailySummary.p8Present}명
                     </span>
                   </div>
                 </div>
 
-                <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 space-y-2">
-                  <label className="block text-xs font-extrabold text-slate-800">
-                    9교시 (17:20~18:10) 감독관 확인 서명
+                <div className="p-4 rounded-2xl bg-rose-50/60 border-2 border-rose-200/80 space-y-2">
+                  <label className="block text-xs font-extrabold text-rose-900">
+                    🍀 9교시 (17:20~18:10) 감독관 서명
                   </label>
                   <input
                     type="text"
                     value={signP9Name}
                     onChange={(e) => setSignP9Name(e.target.value)}
-                    placeholder="9교시 감독관 이름 입력 (예: 김OO)"
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-bold bg-white"
+                    placeholder="9교시 감독관 이름 입력"
+                    className="w-full px-3.5 py-2 rounded-xl border border-rose-200 text-sm font-bold bg-white focus:ring-2 focus:ring-rose-400 focus:outline-none"
                   />
-                  <div className="flex items-center justify-between text-xs text-slate-600">
-                    <span>9교시 교내 재실 인원:</span>
-                    <span className="font-bold text-emerald-700">
+                  <div className="flex items-center justify-between text-xs text-slate-600 font-semibold">
+                    <span>9교시 교실 내 인원:</span>
+                    <span className="font-extrabold text-emerald-600">
                       현재 {dailySummary.p9Present}명
                     </span>
                   </div>
                 </div>
 
-                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                  <label className="block text-xs font-extrabold text-slate-800">
-                    자습 특이사항 담임선생님 보고 메모
+                <div className="p-4 rounded-2xl bg-sky-50/60 border-2 border-sky-200/80 space-y-2">
+                  <label className="block text-xs font-extrabold text-sky-900">
+                    💌 특별한 상황 담임선생님께 보고
                   </label>
                   <textarea
                     rows={2}
                     value={signSpecialNote}
                     onChange={(e) => setSignSpecialNote(e.target.value)}
-                    placeholder="특별한 상황이나 전달사항이 있으면 기록하세요."
-                    className="w-full px-3 py-1.5 rounded-lg border border-slate-300 text-xs bg-white"
+                    placeholder="자습 시간 특이사항이나 전달할 내용을 적어주세요."
+                    className="w-full px-3.5 py-2 rounded-xl border border-sky-200 text-xs font-medium bg-white focus:ring-2 focus:ring-sky-400 focus:outline-none"
                   />
                 </div>
               </div>
@@ -1591,12 +1636,12 @@ export default function HomePage() {
                 <button
                   type="submit"
                   disabled={savingSignature}
-                  className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 font-bold text-xs shadow flex items-center gap-2"
+                  className="px-6 py-3 rounded-2xl bg-gradient-to-r from-rose-400 to-amber-400 hover:from-rose-500 hover:to-amber-500 text-white font-black text-xs shadow-md flex items-center gap-2 transition"
                 >
                   <CheckCircle2 className="w-4 h-4" />
                   {savingSignature
-                    ? '서명 저장 중...'
-                    : `${signingDate} 8·9교시 감독관 확인(서명) 저장`}
+                    ? '서명 기록 중...'
+                    : `${signingDate} 8·9교시 감독관 서명 저장하기 💮`}
                 </button>
               </div>
             </form>
@@ -1607,12 +1652,12 @@ export default function HomePage() {
         {activeTab === 'supervisor_sheet' && (
           <div className="space-y-6">
             {/* 월 선택 컨트롤 */}
-            <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-2xl shadow-sm border border-slate-200 no-print">
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-3xl shadow-sm border-2 border-amber-200 no-print">
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => shiftMonth(-1)}
-                  className="p-2 rounded-lg border border-slate-200 hover:bg-slate-100"
+                  className="p-2 rounded-2xl bg-amber-50 border border-amber-200 hover:bg-amber-100 text-amber-800"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
@@ -1620,27 +1665,29 @@ export default function HomePage() {
                   type="month"
                   value={selectedMonth}
                   onChange={(e) => setSelectedMonth(e.target.value)}
-                  className="px-3 py-1.5 rounded-xl border border-slate-300 font-extrabold text-sm"
+                  className="px-4 py-2 rounded-2xl border-2 border-amber-200 bg-amber-50/30 font-black text-sm text-slate-800"
                 />
                 <button
                   type="button"
                   onClick={() => shiftMonth(1)}
-                  className="p-2 rounded-lg border border-slate-200 hover:bg-slate-100"
+                  className="p-2 rounded-2xl bg-amber-50 border border-amber-200 hover:bg-amber-100 text-amber-800"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
-              <p className="text-xs font-semibold text-slate-600">
-                날짜 칸을 클릭하면 아래 서명란에서 8교시·9교시 감독관 확인(서명)과 담임선생님 확인을 기록할 수 있습니다.
+              <p className="text-xs font-extrabold text-amber-900 bg-amber-50 px-3.5 py-1.5 rounded-full border border-amber-200">
+                💡 표에서 날짜 칸을 톡 클릭하면 아래에서 8교시·9교시 감독관 서명과 담임선생님 확인 도장을 찍을 수 있어요!
               </p>
             </div>
 
-            {/* 첨부 사진 1번 레이아웃 그대로 구현한 오후 자습 감독 확인표 */}
-            <div className="bg-white border-2 border-slate-950 shadow-md overflow-hidden">
-              {/* 상단 노란색 제목 줄 */}
-              <div className="bg-[#FFFF00] border-b-2 border-slate-950 py-3.5 px-4 text-center">
-                <h2 className="text-xl sm:text-2xl font-black text-slate-950 tracking-wide">
-                  오후 자습 감독 확인표({Number(selectedMonth.split('-')[1])}월)
+            {/* 첨부 사진 1번 레이아웃 그대로 + 밝고 깨끗하고 귀여운 파스텔 옐로우 스타일 */}
+            <div className="bg-white rounded-3xl border-2 border-amber-300 shadow-[0_12px_40px_rgba(251,191,36,0.12)] overflow-hidden">
+              {/* 상단 밝은 노란색 배너 제목 */}
+              <div className="bg-gradient-to-r from-[#FFF066] via-[#FFF380] to-[#FFE875] border-b-2 border-amber-300 py-4 px-4 text-center">
+                <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-wide flex items-center justify-center gap-2">
+                  <span>🌻</span>
+                  <span>오후 자습 감독 확인표({Number(selectedMonth.split('-')[1])}월)</span>
+                  <span>🌻</span>
                 </h2>
               </div>
 
@@ -1651,8 +1698,8 @@ export default function HomePage() {
                     {monthWeeks.map((week, wIdx) => (
                       <React.Fragment key={wIdx}>
                         {/* 날짜 행 */}
-                        <tr className="border-b border-slate-950 bg-slate-50/70">
-                          <td className="w-20 sm:w-24 py-2.5 px-2 border-r border-slate-950 text-center font-bold text-slate-900">
+                        <tr className="border-b border-amber-200 bg-amber-50/70">
+                          <td className="w-20 sm:w-24 py-2.5 px-2 border-r border-amber-200 text-center font-extrabold text-amber-900">
                             날짜
                           </td>
                           {week.map((dayCell, dIdx) => (
@@ -1661,10 +1708,10 @@ export default function HomePage() {
                               onClick={() => {
                                 if (dayCell) setSigningDate(dayCell.dateStr);
                               }}
-                              className={`py-2.5 px-2 border-r last:border-r-0 border-slate-950 text-center font-bold cursor-pointer transition ${
+                              className={`py-2.5 px-2 border-r last:border-r-0 border-amber-200 text-center font-extrabold cursor-pointer transition ${
                                 dayCell?.dateStr === signingDate
-                                  ? 'bg-amber-200 text-slate-950'
-                                  : 'hover:bg-amber-50 text-slate-900'
+                                  ? 'bg-amber-300 text-slate-900'
+                                  : 'hover:bg-amber-100/70 text-slate-800'
                               }`}
                             >
                               {dayCell ? dayCell.label : ''}
@@ -1673,13 +1720,13 @@ export default function HomePage() {
                         </tr>
 
                         {/* 확인 행 - 1번째 줄: 8교시 (16:20~17:10) */}
-                        <tr className="border-b border-slate-400">
+                        <tr className="border-b border-amber-100">
                           <td
                             rowSpan={2}
-                            className="w-20 sm:w-24 py-4 px-2 border-r border-b border-slate-950 text-center font-bold text-slate-900 align-middle bg-white"
+                            className="w-20 sm:w-24 py-4 px-2 border-r border-b-2 border-amber-300 text-center font-extrabold text-slate-800 align-middle bg-amber-50/20"
                           >
                             확인
-                            <div className="mt-1 text-[10px] font-medium text-slate-500">
+                            <div className="mt-1 text-[10px] font-bold text-amber-700 bg-amber-100/80 rounded-lg py-0.5 px-1">
                               위: 8교시
                               <br />
                               아래: 9교시
@@ -1695,28 +1742,30 @@ export default function HomePage() {
                                 onClick={() => {
                                   if (dayCell) setSigningDate(dayCell.dateStr);
                                 }}
-                                className={`h-12 px-2 py-1.5 border-r last:border-r-0 border-slate-950 text-center align-middle cursor-pointer transition ${
-                                  dayCell?.dateStr === signingDate ? 'bg-amber-50/70' : 'bg-white'
+                                className={`h-14 px-2 py-1.5 border-r last:border-r-0 border-amber-200 text-center align-middle cursor-pointer transition ${
+                                  dayCell?.dateStr === signingDate
+                                    ? 'bg-amber-50/90'
+                                    : 'bg-white hover:bg-amber-50/30'
                                 }`}
                               >
                                 {dayCell && (
-                                  <div className="flex flex-col items-center justify-center">
-                                    <span className="text-[10px] font-semibold text-slate-400">
+                                  <div className="flex flex-col items-center justify-center gap-0.5">
+                                    <span className="text-[10px] font-bold text-amber-600">
                                       8교시 (16:20~17:10)
                                     </span>
                                     {conf?.period8_supervisor_name ? (
-                                      <span className="font-extrabold text-slate-900 text-xs sm:text-sm">
-                                        ✍️ {conf.period8_supervisor_name}
+                                      <span className="font-extrabold text-slate-800 text-xs sm:text-sm inline-flex items-center gap-1">
+                                        <span>✍️ {conf.period8_supervisor_name}</span>
                                         {conf.period8_headcount !== null &&
                                           conf.period8_headcount !== undefined && (
-                                            <span className="ml-1 text-[11px] font-semibold text-emerald-700">
-                                              ({conf.period8_headcount}명)
+                                            <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-1.5 rounded-full">
+                                              {conf.period8_headcount}명
                                             </span>
                                           )}
                                       </span>
                                     ) : (
-                                      <span className="text-[11px] text-slate-300 no-print">
-                                        클릭하여 서명
+                                      <span className="text-[11px] text-slate-300 font-medium no-print">
+                                        + 8교시 서명
                                       </span>
                                     )}
                                   </div>
@@ -1726,8 +1775,8 @@ export default function HomePage() {
                           })}
                         </tr>
 
-                        {/* 확인 행 - 2번째 줄: 9교시 (17:20~18:10) + 담임선생님 확인 */}
-                        <tr className="border-b border-slate-950">
+                        {/* 확인 행 - 2번째 줄: 9교시 (17:20~18:10) + 담임선생님 확인 도장 */}
+                        <tr className="border-b-2 border-amber-300">
                           {week.map((dayCell, dIdx) => {
                             const conf = dayCell
                               ? confirmationsByDate.get(dayCell.dateStr)
@@ -1738,39 +1787,41 @@ export default function HomePage() {
                                 onClick={() => {
                                   if (dayCell) setSigningDate(dayCell.dateStr);
                                 }}
-                                className={`h-14 px-2 py-1.5 border-r last:border-r-0 border-slate-950 text-center align-middle cursor-pointer transition ${
-                                  dayCell?.dateStr === signingDate ? 'bg-amber-50/70' : 'bg-white'
+                                className={`h-16 px-2 py-1.5 border-r last:border-r-0 border-amber-200 text-center align-middle cursor-pointer transition ${
+                                  dayCell?.dateStr === signingDate
+                                    ? 'bg-amber-50/90'
+                                    : 'bg-white hover:bg-amber-50/30'
                                 }`}
                               >
                                 {dayCell && (
                                   <div className="flex flex-col items-center justify-center gap-0.5">
-                                    <span className="text-[10px] font-semibold text-slate-400">
+                                    <span className="text-[10px] font-bold text-rose-500">
                                       9교시 (17:20~18:10)
                                     </span>
                                     {conf?.period9_supervisor_name ? (
-                                      <span className="font-extrabold text-slate-900 text-xs sm:text-sm">
-                                        ✍️ {conf.period9_supervisor_name}
+                                      <span className="font-extrabold text-slate-800 text-xs sm:text-sm inline-flex items-center gap-1">
+                                        <span>✍️ {conf.period9_supervisor_name}</span>
                                         {conf.period9_headcount !== null &&
                                           conf.period9_headcount !== undefined && (
-                                            <span className="ml-1 text-[11px] font-semibold text-emerald-700">
-                                              ({conf.period9_headcount}명)
+                                            <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-1.5 rounded-full">
+                                              {conf.period9_headcount}명
                                             </span>
                                           )}
                                       </span>
                                     ) : (
-                                      <span className="text-[11px] text-slate-300 no-print">
-                                        클릭하여 서명
+                                      <span className="text-[11px] text-slate-300 font-medium no-print">
+                                        + 9교시 서명
                                       </span>
                                     )}
 
                                     {conf?.teacher_confirmed && (
-                                      <span className="mt-0.5 inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-800 text-[10px] font-extrabold border border-indigo-300">
-                                        <Check className="w-3 h-3" /> 담임확인 완료
+                                      <span className="mt-0.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[10px] font-black border border-rose-300">
+                                        💮 담임선생님 확인완료
                                       </span>
                                     )}
                                     {conf?.special_note && (
-                                      <span className="text-[10px] text-amber-800 bg-amber-100 px-1.5 rounded truncate max-w-full">
-                                        보고: {conf.special_note}
+                                      <span className="text-[10px] font-semibold text-amber-900 bg-amber-100/80 px-2 py-0.5 rounded-full truncate max-w-full">
+                                        💌 {conf.special_note}
                                       </span>
                                     )}
                                   </div>
@@ -1785,8 +1836,8 @@ export default function HomePage() {
                 </table>
               </div>
 
-              {/* 하단 5줄 감독관 안내 수칙 (첨부 사진 1번 문구 그대로 반영) */}
-              <div className="p-4 sm:p-5 bg-white text-xs sm:text-sm text-slate-900 space-y-1.5 font-medium leading-relaxed">
+              {/* 하단 5줄 감독관 안내 수칙 (첨부 사진 1번 문구 그대로 반영 + 귀여운 메모장 스타일) */}
+              <div className="p-5 sm:p-6 bg-gradient-to-r from-amber-50/60 via-white to-rose-50/50 text-xs sm:text-sm text-slate-700 space-y-1.5 font-bold leading-relaxed">
                 <p>* 오후 자습 감독관은 매일 오후 자습에 참여하여 학급 내 올바른 자습 분위기를 만듭니다.</p>
                 <p>
                   * 오후 자습 감독관은 매일 오후 자습이 시작하기 전 칠판에 교내에 있는 인원을 적고 출석체크 표에 체크 합니다.
@@ -1802,14 +1853,14 @@ export default function HomePage() {
             </div>
 
             {/* 선택한 날짜의 감독관 확인 서명 및 담임선생님 확인 패널 */}
-            <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4 no-print">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
+            <div className="bg-white rounded-3xl p-6 shadow-sm border-2 border-amber-200 space-y-4 no-print">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-100 pb-3">
                 <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-1 rounded-lg bg-amber-400 text-slate-950 text-xs font-black">
-                    선택한 날짜: {signingDate}
+                  <span className="px-3 py-1 rounded-full bg-amber-200 text-amber-950 text-xs font-black">
+                    📅 선택 날짜: {signingDate}
                   </span>
-                  <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
-                    8교시·9교시 감독관 서명 및 특이사항 입력
+                  <h3 className="text-sm sm:text-base font-black text-slate-800">
+                    8교시·9교시 감독관 서명 및 특이사항 기록하기
                   </h3>
                 </div>
 
@@ -1823,16 +1874,16 @@ export default function HomePage() {
                         !currentConf?.teacher_confirmed
                       );
                     }}
-                    className={`px-3.5 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition ${
+                    className={`px-4 py-2 rounded-2xl text-xs font-black flex items-center gap-1.5 transition ${
                       confirmationsByDate.get(signingDate)?.teacher_confirmed
-                        ? 'bg-slate-200 text-slate-800 hover:bg-slate-300'
-                        : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow'
+                        ? 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300'
+                        : 'bg-gradient-to-r from-rose-400 to-pink-500 text-white hover:from-rose-500 hover:to-pink-600 shadow-sm'
                     }`}
                   >
-                    <ShieldCheck className="w-4 h-4" />
+                    <span>💮</span>
                     {confirmationsByDate.get(signingDate)?.teacher_confirmed
-                      ? '담임선생님 확인 취소'
-                      : '다음 날 아침 담임선생님 확인 도장 찍기'}
+                      ? '담임선생님 확인 도장 취소'
+                      : '다음 날 아침 담임선생님 확인 도장 꾹!'}
                   </button>
                 )}
               </div>
@@ -1842,48 +1893,48 @@ export default function HomePage() {
                 className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end"
               >
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    8교시 감독관 확인(서명)
+                  <label className="block text-xs font-extrabold text-amber-900 mb-1">
+                    🌱 8교시 감독관 확인(서명)
                   </label>
                   <input
                     type="text"
                     value={signP8Name}
                     onChange={(e) => setSignP8Name(e.target.value)}
                     placeholder="8교시 감독관 이름"
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-bold"
+                    className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-amber-200 text-sm font-bold focus:ring-2 focus:ring-amber-400 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    9교시 감독관 확인(서명)
+                  <label className="block text-xs font-extrabold text-rose-900 mb-1">
+                    🍀 9교시 감독관 확인(서명)
                   </label>
                   <input
                     type="text"
                     value={signP9Name}
                     onChange={(e) => setSignP9Name(e.target.value)}
                     placeholder="9교시 감독관 이름"
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-bold"
+                    className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-rose-200 text-sm font-bold focus:ring-2 focus:ring-rose-400 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    특별한 상황 담임선생님 보고
+                  <label className="block text-xs font-extrabold text-sky-900 mb-1">
+                    💌 특별한 상황 담임선생님 보고
                   </label>
                   <input
                     type="text"
                     value={signSpecialNote}
                     onChange={(e) => setSignSpecialNote(e.target.value)}
                     placeholder="특이사항 또는 교내 인원 메모"
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
+                    className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-sky-200 text-sm font-medium focus:ring-2 focus:ring-sky-400 focus:outline-none"
                   />
                 </div>
                 <button
                   type="submit"
                   disabled={savingSignature}
-                  className="py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 font-bold text-xs flex items-center justify-center gap-1.5 shadow"
+                  className="py-3 px-4 rounded-2xl bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-500 hover:to-orange-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-sm transition"
                 >
                   <Save className="w-4 h-4" />
-                  {savingSignature ? '저장 중...' : '확인표에 서명 저장'}
+                  {savingSignature ? '저장 중...' : '확인표에 서명 저장 ✨'}
                 </button>
               </form>
             </div>
@@ -1893,22 +1944,26 @@ export default function HomePage() {
         {/* ==================== TAB 3: 월별 개인 누적 자습시간 & 참여 통계 ==================== */}
         {activeTab === 'monthly_stats' && (
           <div className="space-y-6">
-            <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
-                  <Award className="w-5 h-5 text-amber-500" />
-                  {selectedMonth} 학생별 오후 자습 누적 참여 시간표
-                </h2>
-                <p className="text-xs text-slate-600 mt-0.5">
-                  8교시(16:20~17:10 = 50분), 9교시(17:20~18:10 = 50분) 기준으로 학생 개개인의 월간 누적 자습시간과 사유별 결석 현황을 집계합니다.
-                </p>
+            <div className="bg-white rounded-3xl p-6 shadow-sm border-2 border-emerald-200 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-100 flex items-center justify-center text-2xl">
+                  🏆
+                </div>
+                <div>
+                  <h2 className="text-lg font-black text-slate-800">
+                    {selectedMonth} 우리 반 학생별 누적 자습시간 & 열공 통계
+                  </h2>
+                  <p className="text-xs font-semibold text-slate-500 mt-0.5">
+                    8교시(50분) + 9교시(50분) 기준으로 이번 달 친구들이 얼마나 자습에 참여했는지 누적 시간으로 보여줘요!
+                  </p>
+                </div>
               </div>
 
               <div className="flex items-center gap-2 no-print">
                 <button
                   type="button"
                   onClick={() => shiftMonth(-1)}
-                  className="p-2 rounded-lg border border-slate-200 hover:bg-slate-100"
+                  className="p-2 rounded-2xl bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-800"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
@@ -1916,95 +1971,99 @@ export default function HomePage() {
                   type="month"
                   value={selectedMonth}
                   onChange={(e) => setSelectedMonth(e.target.value)}
-                  className="px-3 py-1.5 rounded-xl border border-slate-300 font-extrabold text-sm"
+                  className="px-4 py-2 rounded-2xl border-2 border-emerald-200 bg-emerald-50/30 font-black text-sm text-slate-800"
                 />
                 <button
                   type="button"
                   onClick={() => shiftMonth(1)}
-                  className="p-2 rounded-lg border border-slate-200 hover:bg-slate-100"
+                  className="p-2 rounded-2xl bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-800"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="bg-white rounded-3xl shadow-sm border-2 border-emerald-200 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-sm">
                   <thead>
-                    <tr className="bg-slate-900 text-white text-xs font-bold">
-                      <th className="py-3 px-4 text-center w-16">번호</th>
-                      <th className="py-3 px-4 text-left w-32">학생 이름</th>
-                      <th className="py-3 px-4 text-center">8교시 출석</th>
-                      <th className="py-3 px-4 text-center">9교시 출석</th>
-                      <th className="py-3 px-4 text-center">총 참여 교시</th>
-                      <th className="py-3 px-4 text-left">월 누적 자습시간 (1교시=50분)</th>
-                      <th className="py-3 px-4 text-left">불참 사유별 횟수</th>
-                      <th className="py-3 px-4 text-center no-print">결석 일자 상세</th>
+                    <tr className="bg-gradient-to-r from-emerald-100 via-teal-100/80 to-amber-100/80 text-slate-800 text-xs font-extrabold border-b-2 border-emerald-200">
+                      <th className="py-3.5 px-4 text-center w-16">번호</th>
+                      <th className="py-3.5 px-4 text-left w-36">학생 이름</th>
+                      <th className="py-3.5 px-4 text-center">🌱 8교시 출석</th>
+                      <th className="py-3.5 px-4 text-center">🍀 9교시 출석</th>
+                      <th className="py-3.5 px-4 text-center">총 참여 교시</th>
+                      <th className="py-3.5 px-4 text-left">⏱️ 월 누적 자습시간 (1교시=50분)</th>
+                      <th className="py-3.5 px-4 text-left">불참 사유별 횟수</th>
+                      <th className="py-3.5 px-4 text-center no-print">상세 기록</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-200">
+                  <tbody className="divide-y divide-emerald-100">
                     {studentMonthlyStats.map((stat) => (
-                      <tr key={stat.student.id} className="hover:bg-slate-50">
-                        <td className="py-3 px-4 text-center text-xs font-bold text-slate-500">
-                          {stat.student.student_number}
+                      <tr key={stat.student.id} className="hover:bg-emerald-50/30 transition">
+                        <td className="py-3.5 px-4 text-center">
+                          <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black inline-flex items-center justify-center">
+                            {stat.student.student_number}
+                          </span>
                         </td>
-                        <td className="py-3 px-4 font-extrabold text-slate-900">
+                        <td className="py-3.5 px-4 font-extrabold text-slate-800">
                           {stat.student.name}
                         </td>
-                        <td className="py-3 px-4 text-center font-semibold text-slate-700">
+                        <td className="py-3.5 px-4 text-center font-bold text-slate-700">
                           {stat.p8Attended}회{' '}
                           <span className="text-xs text-slate-400">
                             ({stat.p8Attended * MINUTES_PER_PERIOD}분)
                           </span>
                         </td>
-                        <td className="py-3 px-4 text-center font-semibold text-slate-700">
+                        <td className="py-3.5 px-4 text-center font-bold text-slate-700">
                           {stat.p9Attended}회{' '}
                           <span className="text-xs text-slate-400">
                             ({stat.p9Attended * MINUTES_PER_PERIOD}분)
                           </span>
                         </td>
-                        <td className="py-3 px-4 text-center font-extrabold text-indigo-700">
-                          총 {stat.totalAttendedPeriods}교시
+                        <td className="py-3.5 px-4 text-center">
+                          <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-black">
+                            총 {stat.totalAttendedPeriods}교시
+                          </span>
                         </td>
-                        <td className="py-3 px-4">
-                          <div className="flex flex-col gap-1">
+                        <td className="py-3.5 px-4">
+                          <div className="flex flex-col gap-1.5">
                             <span className="font-black text-emerald-700 text-sm">
-                              ⏱️ {formatMinutesToKorean(stat.totalMinutes)}
+                              ✨ {formatMinutesToKorean(stat.totalMinutes)}
                             </span>
-                            <div className="w-40 h-2 rounded-full bg-slate-100 overflow-hidden">
+                            <div className="w-44 h-2.5 rounded-full bg-emerald-100/80 overflow-hidden">
                               <div
-                                className="h-full bg-emerald-500 rounded-full"
+                                className="h-full bg-gradient-to-r from-emerald-400 to-teal-400 rounded-full"
                                 style={{ width: `${Math.min(100, stat.attendanceRate)}%` }}
                               />
                             </div>
                           </div>
                         </td>
-                        <td className="py-3 px-4">
-                          <div className="flex flex-wrap gap-1">
+                        <td className="py-3.5 px-4">
+                          <div className="flex flex-wrap gap-1.5">
                             {Object.entries(stat.reasonBreakdown).length === 0 ? (
-                              <span className="text-xs text-emerald-600 font-semibold">
-                                결석 없음
+                              <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200 text-xs font-extrabold">
+                                🌷 결석 없음
                               </span>
                             ) : (
                               Object.entries(stat.reasonBreakdown).map(([reason, cnt]) => (
                                 <span
                                   key={reason}
-                                  className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold"
+                                  className="px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-xs font-extrabold"
                                 >
-                                  {reason} {cnt}회
+                                  {getReasonEmoji(reason)} {reason} {cnt}회
                                 </span>
                               ))
                             )}
                           </div>
                         </td>
-                        <td className="py-3 px-4 text-center no-print">
+                        <td className="py-3.5 px-4 text-center no-print">
                           <button
                             type="button"
                             onClick={() => setDetailStudentId(stat.student.id)}
-                            className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 text-xs font-bold border border-slate-200"
+                            className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-extrabold border border-amber-200 transition"
                           >
-                            상세 이력 ({stat.absenceHistory.length}건)
+                            🔍 결석일자 보기 ({stat.absenceHistory.length}건)
                           </button>
                         </td>
                       </tr>
@@ -2020,65 +2079,69 @@ export default function HomePage() {
         {activeTab === 'admin' && role === 'teacher' && (
           <div className="space-y-6">
             {/* 섹션 A: 학생별 누적 시간 & 언제 결석했는지 한눈에 확인하는 교사용 리포트 */}
-            <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
+            <div className="bg-white rounded-3xl p-6 shadow-sm border-2 border-rose-200 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
-                    <ShieldCheck className="w-5 h-5 text-indigo-600" />
-                    담임교사용 학생별 자습 참여 시간 & 결석 일자·사유 상세 리포트 ({selectedMonth})
-                  </h2>
-                  <p className="text-xs text-slate-600">
-                    각 학생이 이번 달 얼마나 자습에 참여했는지(누적 시간), 언제(몇 월 며칠 몇 교시) 어떤 사유로 결석했는지 한눈에 확인합니다.
-                  </p>
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-rose-100 flex items-center justify-center text-2xl">
+                    👩‍🏫
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-black text-slate-800">
+                      담임선생님용 학생별 누적 자습시간 & 결석 일자·사유 리포트 ({selectedMonth})
+                    </h2>
+                    <p className="text-xs font-semibold text-slate-500">
+                      각 학생이 이번 달 얼마나 자습했는지, 언제(몇 월 며칠 몇 교시) 어떤 사유로 결석했는지 한눈에 확인하실 수 있어요.
+                    </p>
+                  </div>
                 </div>
                 <input
                   type="month"
                   value={selectedMonth}
                   onChange={(e) => setSelectedMonth(e.target.value)}
-                  className="px-3 py-1.5 rounded-xl border border-slate-300 font-bold text-xs"
+                  className="px-4 py-2 rounded-2xl border-2 border-rose-200 bg-rose-50/30 font-black text-xs text-slate-800"
                 />
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-xs sm:text-sm">
+                <table className="w-full border-collapse text-xs sm:text-sm rounded-2xl overflow-hidden">
                   <thead>
-                    <tr className="bg-indigo-950 text-white font-bold">
-                      <th className="py-2.5 px-3 text-left w-32">학생</th>
-                      <th className="py-2.5 px-3 text-left w-48">월 누적 자습시간</th>
-                      <th className="py-2.5 px-3 text-left">
-                        언제 · 왜 결석했는지 (날짜 / 교시 / 사유 상세)
+                    <tr className="bg-gradient-to-r from-rose-100 via-pink-100/80 to-amber-100 text-slate-800 font-extrabold border-b-2 border-rose-200">
+                      <th className="py-3 px-4 text-left w-36">🐣 학생</th>
+                      <th className="py-3 px-4 text-left w-52">⏱️ 월 누적 자습시간</th>
+                      <th className="py-3 px-4 text-left">
+                        📅 언제 · 왜 결석했는지 (날짜 / 교시 / 사유 상세)
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-200">
+                  <tbody className="divide-y divide-rose-100">
                     {studentMonthlyStats.map((stat) => (
-                      <tr key={stat.student.id} className="hover:bg-slate-50">
-                        <td className="py-3 px-3 font-extrabold text-slate-900 whitespace-nowrap">
-                          {stat.student.student_number}. {stat.student.name}
+                      <tr key={stat.student.id} className="hover:bg-rose-50/30">
+                        <td className="py-3.5 px-4 font-extrabold text-slate-800 whitespace-nowrap">
+                          {stat.student.student_number}번 · {stat.student.name}
                         </td>
-                        <td className="py-3 px-3">
-                          <div className="font-black text-indigo-700">
+                        <td className="py-3.5 px-4">
+                          <div className="font-black text-emerald-700">
                             {formatMinutesToKorean(stat.totalMinutes)}
                           </div>
-                          <div className="text-[11px] text-slate-500">
+                          <div className="text-[11px] font-semibold text-slate-500">
                             8교시 {stat.p8Attended}회 · 9교시 {stat.p9Attended}회 출석
                           </div>
                         </td>
-                        <td className="py-3 px-3">
+                        <td className="py-3.5 px-4">
                           {stat.absenceHistory.length === 0 ? (
-                            <span className="text-xs font-semibold text-emerald-600">
-                              기록된 결석 없음 (전출석)
+                            <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200 text-xs font-extrabold">
+                              🌷 기록된 결석 없음 (개근!)
                             </span>
                           ) : (
                             <div className="flex flex-wrap gap-1.5">
                               {stat.absenceHistory.map((item, idx) => (
                                 <span
                                   key={idx}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-900 text-xs font-semibold"
+                                  className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-900 text-xs font-bold"
                                 >
                                   <strong>{item.date.slice(5)}</strong> ({item.period}):{' '}
-                                  <span className="text-rose-600 font-extrabold">
-                                    {item.reason}
+                                  <span className="text-rose-600 font-black">
+                                    {getReasonEmoji(item.reason)} {item.reason}
                                   </span>
                                   {item.note && (
                                     <span className="text-slate-500">· {item.note}</span>
@@ -2098,15 +2161,17 @@ export default function HomePage() {
             {/* 섹션 B: 학생 명단 추가 / 엑셀 붙여넣기 관리 & 기타 결석 사유 추가 */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* 학생 명단 관리 */}
-              <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-5">
-                <div>
-                  <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
-                    <Users className="w-5 h-5 text-indigo-600" />
-                    우리 반 학생 명단 관리 (현재 {students.length}명)
-                  </h3>
-                  <p className="text-xs text-slate-600 mt-0.5">
-                    학생을 한 명씩 추가하거나, 엑셀의 이름 열을 복사해 한 번에 붙여넣어 등록할 수 있습니다.
-                  </p>
+              <div className="bg-white rounded-3xl p-6 shadow-sm border-2 border-amber-200 space-y-5">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-2xl">🐥</span>
+                  <div>
+                    <h3 className="text-base font-black text-slate-800">
+                      우리 반 학생 명단 관리 (현재 {students.length}명)
+                    </h3>
+                    <p className="text-xs font-semibold text-slate-500 mt-0.5">
+                      한 명씩 추가하거나, 엑셀의 학생 이름 열을 복사해 한 번에 붙여넣을 수 있어요!
+                    </p>
+                  </div>
                 </div>
 
                 {/* 개별 추가 폼 */}
@@ -2117,7 +2182,7 @@ export default function HomePage() {
                     value={newStudentNumber}
                     onChange={(e) => setNewStudentNumber(e.target.value)}
                     placeholder="번호(자동)"
-                    className="w-24 px-3 py-2 rounded-lg border border-slate-300 text-xs"
+                    className="w-24 px-3 py-2.5 rounded-2xl border-2 border-amber-200 text-xs font-bold"
                   />
                   <input
                     type="text"
@@ -2125,11 +2190,11 @@ export default function HomePage() {
                     value={newStudentName}
                     onChange={(e) => setNewStudentName(e.target.value)}
                     placeholder="추가할 학생 이름 입력"
-                    className="flex-1 px-3 py-2 rounded-lg border border-slate-300 text-xs font-bold"
+                    className="flex-1 px-3.5 py-2.5 rounded-2xl border-2 border-amber-200 text-xs font-bold"
                   />
                   <button
                     type="submit"
-                    className="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1"
+                    className="px-4 py-2.5 rounded-2xl bg-amber-400 hover:bg-amber-500 text-white text-xs font-black flex items-center gap-1 shadow-sm transition"
                   >
                     <UserPlus className="w-3.5 h-3.5" />
                     학생 추가
@@ -2139,18 +2204,18 @@ export default function HomePage() {
                 {/* 엑셀 줄바꿈 일괄 붙여넣기 폼 */}
                 <form
                   onSubmit={handleBulkAddStudents}
-                  className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3"
+                  className="p-4 rounded-2xl bg-amber-50/60 border-2 border-amber-200/80 space-y-3"
                 >
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-extrabold text-slate-800">
-                      엑셀 학생 명단 줄바꿈 붙여넣기 (일괄 등록)
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-xs font-extrabold text-amber-900">
+                      📋 엑셀 학생 명단 줄바꿈 붙여넣기 (일괄 등록)
                     </label>
-                    <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
+                    <label className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={bulkReplaceMode}
                         onChange={(e) => setBulkReplaceMode(e.target.checked)}
-                        className="rounded border-slate-300"
+                        className="rounded border-amber-300 text-amber-500"
                       />
                       기존 예시 명단을 지우고 새 명단으로 교체
                     </label>
@@ -2160,33 +2225,34 @@ export default function HomePage() {
                     value={bulkStudentsText}
                     onChange={(e) => setBulkStudentsText(e.target.value)}
                     placeholder={'엑셀에서 학생 이름들을 복사해 그대로 붙여넣으세요.\n예:\n홍길동\n김철수\n이영희'}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs bg-white"
+                    className="w-full px-3.5 py-2.5 rounded-2xl border border-amber-200 text-xs font-medium bg-white"
                   />
                   <button
                     type="submit"
-                    className="w-full py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold"
+                    className="w-full py-2.5 rounded-2xl bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-black shadow-sm transition"
                   >
-                    붙여넣은 학생 명단 일괄 적용하기
+                    붙여넣은 학생 명단 한 번에 적용하기 ✨
                   </button>
                 </form>
 
                 {/* 현재 학생 목록 */}
-                <div className="max-h-64 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-xl">
+                <div className="max-h-64 overflow-y-auto divide-y divide-amber-100 border-2 border-amber-100 rounded-2xl">
                   {students.map((st) => (
                     <div
                       key={st.id}
-                      className="px-3.5 py-2 flex items-center justify-between text-xs hover:bg-slate-50"
+                      className="px-4 py-2.5 flex items-center justify-between text-xs hover:bg-amber-50/40"
                     >
-                      <span className="font-bold text-slate-800">
-                        {st.student_number}번 · {st.name}
+                      <span className="font-extrabold text-slate-800">
+                        <span className="text-amber-600 mr-1.5">{st.student_number}번</span>
+                        {st.name}
                       </span>
                       <button
                         type="button"
                         onClick={() => handleDeleteStudent(st.id, st.name)}
-                        className="text-rose-500 hover:text-rose-700 p-1"
+                        className="text-rose-400 hover:text-rose-600 p-1"
                         title="학생 삭제"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   ))}
@@ -2195,14 +2261,17 @@ export default function HomePage() {
 
               {/* 결석(불참) 사유 관리 & 감독관 비밀번호 설정 */}
               <div className="space-y-6">
-                <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
-                  <div>
-                    <h3 className="text-base font-black text-slate-900">
-                      기타 결석(불참) 사유 관리
-                    </h3>
-                    <p className="text-xs text-slate-600 mt-0.5">
-                      기본 사유(학원, 병원, 동아리, 하브루타, 기타) 외에 학급 상황에 맞는 사유를 자유롭게 추가할 수 있습니다.
-                    </p>
+                <div className="bg-white rounded-3xl p-6 shadow-sm border-2 border-rose-200 space-y-4">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-2xl">🏷️</span>
+                    <div>
+                      <h3 className="text-base font-black text-slate-800">
+                        기타 결석(불참) 사유 추가 · 관리
+                      </h3>
+                      <p className="text-xs font-semibold text-slate-500 mt-0.5">
+                        기본 사유(학원, 병원, 동아리, 하브루타, 기타) 외에 우리 반에 필요한 사유를 추가해 보세요!
+                      </p>
+                    </div>
                   </div>
 
                   <form onSubmit={handleAddReason} className="flex gap-2">
@@ -2212,11 +2281,11 @@ export default function HomePage() {
                       value={newReasonLabel}
                       onChange={(e) => setNewReasonLabel(e.target.value)}
                       placeholder="새 불참 사유 입력 (예: 방과후, 상담, 대회준비)"
-                      className="flex-1 px-3 py-2 rounded-lg border border-slate-300 text-xs font-bold"
+                      className="flex-1 px-3.5 py-2.5 rounded-2xl border-2 border-rose-200 text-xs font-bold"
                     />
                     <button
                       type="submit"
-                      className="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1"
+                      className="px-4 py-2.5 rounded-2xl bg-rose-400 hover:bg-rose-500 text-white text-xs font-black flex items-center gap-1 shadow-sm transition"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       사유 추가
@@ -2227,13 +2296,15 @@ export default function HomePage() {
                     {reasons.map((r) => (
                       <span
                         key={r.id}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-300 text-xs font-bold text-slate-800"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-rose-50 border border-rose-200 text-xs font-extrabold text-rose-800"
                       >
-                        <span>{r.label}</span>
+                        <span>
+                          {getReasonEmoji(r.label)} {r.label}
+                        </span>
                         <button
                           type="button"
                           onClick={() => handleDeleteReason(r.id, r.label)}
-                          className="text-slate-400 hover:text-rose-600"
+                          className="text-rose-400 hover:text-rose-700"
                           title="사유 삭제"
                         >
                           <X className="w-3.5 h-3.5" />
@@ -2246,34 +2317,36 @@ export default function HomePage() {
                 {/* 오후 자습 감독관 & 담임교사 비밀번호 변경 */}
                 <form
                   onSubmit={handleUpdateSettings}
-                  className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4"
+                  className="bg-white rounded-3xl p-6 shadow-sm border-2 border-sky-200 space-y-4"
                 >
-                  <div>
-                    <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
-                      <KeyRound className="w-4 h-4 text-amber-600" />
-                      오후 자습 감독관 비밀번호 & 학급 설정
-                    </h3>
-                    <p className="text-xs text-slate-600 mt-0.5">
-                      오후 자습 감독관 학생들이 로그인할 때 사용하는 공유 비밀번호와 담임교사 비밀번호를 변경합니다.
-                    </p>
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-2xl">🔐</span>
+                    <div>
+                      <h3 className="text-base font-black text-slate-800">
+                        오후 자습 감독관 비밀번호 & 학급 이름 설정
+                      </h3>
+                      <p className="text-xs font-semibold text-slate-500 mt-0.5">
+                        감독관 학생들이 로그인할 때 쓰는 공유 비밀번호와 선생님 비밀번호를 변경할 수 있어요.
+                      </p>
+                    </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      학급 표시 이름
+                    <label className="block text-xs font-extrabold text-slate-700 mb-1">
+                      🏫 학급 표시 이름
                     </label>
                     <input
                       type="text"
                       value={adminClassName}
                       onChange={(e) => setAdminClassName(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs font-bold"
+                      className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-sky-200 text-xs font-bold"
                     />
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        새 오후 자습 감독관 비밀번호 (변경 시 입력)
+                      <label className="block text-xs font-extrabold text-slate-700 mb-1">
+                        🐣 새 감독관 공유 비밀번호 (변경 시 입력)
                       </label>
                       <input
                         type="password"
@@ -2281,12 +2354,12 @@ export default function HomePage() {
                         value={adminNewSupervisorPw}
                         onChange={(e) => setAdminNewSupervisorPw(e.target.value)}
                         placeholder="감독관 새 비밀번호 (4자 이상)"
-                        className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs"
+                        className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-sky-200 text-xs"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        새 담임교사 비밀번호 (변경 시 입력)
+                      <label className="block text-xs font-extrabold text-slate-700 mb-1">
+                        👩‍🏫 새 담임교사 비밀번호 (변경 시 입력)
                       </label>
                       <input
                         type="password"
@@ -2294,16 +2367,16 @@ export default function HomePage() {
                         value={adminNewTeacherPw}
                         onChange={(e) => setAdminNewTeacherPw(e.target.value)}
                         placeholder="교사 새 비밀번호 (4자 이상)"
-                        className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs"
+                        className="w-full px-3.5 py-2.5 rounded-2xl border-2 border-sky-200 text-xs"
                       />
                     </div>
                   </div>
 
                   <button
                     type="submit"
-                    className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow"
+                    className="w-full py-3 rounded-2xl bg-gradient-to-r from-sky-400 to-indigo-400 hover:from-sky-500 hover:to-indigo-500 text-white font-black text-xs shadow-sm transition"
                   >
-                    학급 설정 및 비밀번호 변경 저장
+                    학급 설정 및 비밀번호 변경 저장하기 ✨
                   </button>
                 </form>
               </div>
@@ -2312,28 +2385,33 @@ export default function HomePage() {
         )}
       </main>
 
-      {/* 학생 개인별 누적시간 & 결석 일자 모달 */}
+      {/* 학생 개인별 누적시간 & 결석 일자 귀여운 파스텔 모달 */}
       {selectedDetailStat && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4 no-print">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <div>
-                <h3 className="text-lg font-black text-slate-900">
-                  {selectedDetailStat.student.student_number}번 {selectedDetailStat.student.name} ·{' '}
-                  {selectedMonth} 자습 리포트
-                </h3>
-                <p className="text-xs text-slate-500">
-                  누적 자습시간:{' '}
-                  <strong className="text-emerald-700">
-                    {formatMinutesToKorean(selectedDetailStat.totalMinutes)}
-                  </strong>{' '}
-                  (8교시 {selectedDetailStat.p8Attended}회, 9교시 {selectedDetailStat.p9Attended}회 출석)
-                </p>
+        <div className="fixed inset-0 z-50 bg-slate-900/35 backdrop-blur-sm flex items-center justify-center p-4 no-print">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border-2 border-amber-200 space-y-4">
+            <div className="flex items-center justify-between border-b border-amber-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="w-10 h-10 rounded-2xl bg-amber-100 flex items-center justify-center text-xl">
+                  🐣
+                </span>
+                <div>
+                  <h3 className="text-lg font-black text-slate-800">
+                    {selectedDetailStat.student.student_number}번 {selectedDetailStat.student.name} ·{' '}
+                    {selectedMonth} 자습 리포트
+                  </h3>
+                  <p className="text-xs font-bold text-slate-500">
+                    월 누적 자습시간:{' '}
+                    <strong className="text-emerald-600">
+                      {formatMinutesToKorean(selectedDetailStat.totalMinutes)}
+                    </strong>{' '}
+                    (8교시 {selectedDetailStat.p8Attended}회, 9교시 {selectedDetailStat.p9Attended}회 출석)
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => setDetailStudentId(null)}
-                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"
+                className="p-1.5 rounded-xl hover:bg-rose-50 text-slate-400 hover:text-rose-500"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -2341,26 +2419,26 @@ export default function HomePage() {
 
             <div className="space-y-2 max-h-80 overflow-y-auto">
               <h4 className="text-xs font-extrabold text-slate-700">
-                결석(불참) 일자 및 사유 내역 ({selectedDetailStat.absenceHistory.length}건)
+                📅 결석(불참) 일자 및 사유 내역 ({selectedDetailStat.absenceHistory.length}건)
               </h4>
               {selectedDetailStat.absenceHistory.length === 0 ? (
-                <div className="p-4 rounded-xl bg-emerald-50 text-emerald-800 text-xs font-bold text-center">
-                  이번 달 결석 내역이 없습니다!
+                <div className="p-5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-extrabold text-center">
+                  🌷 이번 달 결석 내역이 한 건도 없어요! 참 잘했어요!
                 </div>
               ) : (
-                <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl">
+                <div className="divide-y divide-rose-100 border-2 border-rose-100 rounded-2xl">
                   {selectedDetailStat.absenceHistory.map((h, i) => (
                     <div
                       key={i}
-                      className="px-3.5 py-2.5 flex items-center justify-between text-xs"
+                      className="px-4 py-2.5 flex items-center justify-between text-xs"
                     >
-                      <span className="font-bold text-slate-800">
+                      <span className="font-extrabold text-slate-700">
                         {h.date} ({h.period})
                       </span>
                       <div className="flex items-center gap-2">
                         {h.note && <span className="text-slate-500">{h.note}</span>}
-                        <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-700 font-extrabold">
-                          {h.reason}
+                        <span className="px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-700 font-black">
+                          {getReasonEmoji(h.reason)} {h.reason}
                         </span>
                       </div>
                     </div>
@@ -2373,9 +2451,9 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={() => setDetailStudentId(null)}
-                className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold"
+                className="px-5 py-2.5 rounded-2xl bg-amber-300 hover:bg-amber-400 text-amber-950 text-xs font-black transition"
               >
-                닫기
+                닫기 ✨
               </button>
             </div>
           </div>

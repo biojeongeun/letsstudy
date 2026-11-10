@@ -1,18 +1,33 @@
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   body {
-    @apply bg-slate-50 text-slate-900 antialiased;
+    background-color: #FFFDF9;
+    color: #334155;
+    -webkit-font-smoothing: antialiased;
     font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, system-ui,
       Roboto, 'Helvetica Neue', 'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic',
       sans-serif;
   }
 }
 
+.pastel-grid-bg {
+  background-color: #FFFDF9;
+  background-image: radial-gradient(#FDE68A 1px, transparent 1px),
+    radial-gradient(#FECDD3 1px, #FFFDF9 1px);
+  background-size: 40px 40px;
+  background-position: 0 0, 20px 20px;
+}
+
 @media print {
   .no-print {
     display: none !important;
+  }
+  body {
+    background: #ffffff !important;
   }
 }
