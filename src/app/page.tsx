@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   Award,
@@ -255,6 +255,8 @@ export default function HomePage() {
     checkAuth();
   }, [checkAuth]);
 
+  const saveSeqRef = useRef(0);
+
   // 학급 데이터 불러오기
   const fetchStudyData = useCallback(
     async (targetMonth = selectedMonth, targetDate = selectedDate) => {
@@ -293,7 +295,8 @@ export default function HomePage() {
     if (authenticated) {
       fetchStudyData(selectedMonth, selectedDate);
     }
-  }, [authenticated, selectedMonth, selectedDate, fetchStudyData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, selectedMonth]);
 
   // 날짜 변경 시 월이 바뀌면 selectedMonth도 동기화
   const handleDateChange = (nextDate: string) => {
@@ -543,7 +546,7 @@ export default function HomePage() {
     setActiveTab('attendance');
   };
 
-  // 개별 학생의 8교시 또는 9교시 출석 상태 변경 및 즉시 저장
+  // 개별 학생의 8교시 또는 9교시 출석 상태 변경 및 해당 날짜 전체 학생 누적 즉시 저장
   const handleSelectPeriodStatus = async (
     studentId: string,
     period: 8 | 9,
@@ -561,10 +564,49 @@ export default function HomePage() {
       ...(period === 8 ? { period8Status: nextStatus } : { period9Status: nextStatus }),
     };
 
-    setDailyDraft((prev) => ({
-      ...prev,
+    const nextDraft = {
+      ...dailyDraft,
       [studentId]: updated,
+    };
+
+    setDailyDraft(nextDraft);
+
+    const targetDate = selectedDate;
+    const allRecordsForDate = students.map((st) => {
+      const d =
+        st.id === studentId
+          ? updated
+          : nextDraft[st.id] || {
+              period8Status: '출석',
+              period8Note: '',
+              period9Status: '출석',
+              period9Note: '',
+            };
+      return {
+        studentId: st.id,
+        period8Status: d.period8Status || '출석',
+        period8Note: d.period8Note || '',
+        period9Status: d.period9Status || '출석',
+        period9Note: d.period9Note || '',
+      };
+    });
+
+    // 즉시 화면의 월별 누적 시간(monthAttendance)에도 반영하여 연속 클릭 시 상태 역전 방지
+    const optimisticRows: AttendanceRecord[] = allRecordsForDate.map((r) => ({
+      student_id: r.studentId,
+      study_date: targetDate,
+      period8_status: r.period8Status,
+      period8_note: r.period8Note,
+      period9_status: r.period9Status,
+      period9_note: r.period9Note,
     }));
+
+    setMonthAttendance((prev) => {
+      const filtered = prev.filter((r) => r.study_date !== targetDate);
+      return [...filtered, ...optimisticRows];
+    });
+
+    const seq = ++saveSeqRef.current;
 
     try {
       const res = await fetch('/api/study', {
@@ -572,24 +614,16 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'upsert_attendance',
-          studyDate: selectedDate,
-          records: [
-            {
-              studentId,
-              period8Status: updated.period8Status,
-              period8Note: updated.period8Note,
-              period9Status: updated.period9Status,
-              period9Note: updated.period9Note,
-            },
-          ],
+          studyDate: targetDate,
+          records: allRecordsForDate,
         }),
       });
-      if (res.ok) {
+      if (res.ok && seq === saveSeqRef.current) {
         const data = await res.json();
         const savedRecords = data.records || [];
         if (savedRecords.length > 0) {
           setMonthAttendance((prev) => {
-            const filtered = prev.filter((r) => r.study_date !== selectedDate);
+            const filtered = prev.filter((r) => r.study_date !== targetDate);
             return [...filtered, ...savedRecords];
           });
         }
@@ -662,26 +696,62 @@ export default function HomePage() {
     }
   };
 
-  // 8교시 상태 -> 9교시로 동일 복사
-  const handleCopyPeriod8ToPeriod9 = () => {
-    setDailyDraft((prev) => {
-      const next = { ...prev };
-      for (const st of students) {
-        const cur = next[st.id] || {
-          period8Status: '출석',
-          period8Note: '',
-          period9Status: '출석',
-          period9Note: '',
-        };
-        next[st.id] = {
-          ...cur,
-          period9Status: cur.period8Status,
-          period9Note: cur.period8Note,
-        };
-      }
-      return next;
+  // 8교시 상태 -> 9교시로 동일 복사 및 즉시 DB 저장
+  const handleCopyPeriod8ToPeriod9 = async () => {
+    if (students.length === 0) return;
+    const nextDraft: typeof dailyDraft = {};
+    for (const st of students) {
+      const cur = dailyDraft[st.id] || {
+        period8Status: '출석',
+        period8Note: '',
+        period9Status: '출석',
+        period9Note: '',
+      };
+      nextDraft[st.id] = {
+        ...cur,
+        period9Status: cur.period8Status,
+        period9Note: cur.period8Note,
+      };
+    }
+    setDailyDraft(nextDraft);
+
+    const targetDate = selectedDate;
+    const records = students.map((st) => {
+      const d = nextDraft[st.id];
+      return {
+        studentId: st.id,
+        period8Status: d.period8Status || '출석',
+        period8Note: d.period8Note || '',
+        period9Status: d.period9Status || '출석',
+        period9Note: d.period9Note || '',
+      };
     });
-    showToast('🐰 8교시 출결 상태를 9교시로 똑같이 복사했어요! [전체 출석표 저장]을 눌러주세요.');
+
+    const seq = ++saveSeqRef.current;
+    try {
+      const res = await fetch('/api/study', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'upsert_attendance',
+          studyDate: targetDate,
+          records,
+        }),
+      });
+      if (res.ok && seq === saveSeqRef.current) {
+        const data = await res.json();
+        const savedRecords = data.records || [];
+        if (savedRecords.length > 0) {
+          setMonthAttendance((prev) => {
+            const filtered = prev.filter((r) => r.study_date !== targetDate);
+            return [...filtered, ...savedRecords];
+          });
+        }
+        showToast(`🐰 ${targetDate} 8교시 출결 상태를 9교시로 똑같이 복사하고 저장했어요!`);
+      }
+    } catch {
+      showToast('🐰 8교시 출결 상태를 9교시로 복사했어요.');
+    }
   };
 
   // 감독 확인표 서명 저장 핸들러
@@ -2458,7 +2528,7 @@ export default function HomePage() {
         {/* ==================== TAB 4: 담임교사 관리자 화면 (학생 명단 / 사유 추가 / 결석 일자 조회 / 비밀번호) ==================== */}
         {activeTab === 'admin' && role === 'teacher' && (
           <div className="space-y-6">
-            {/* 섹션 A: 학생별 누적 시간 & 언제 결석했는지 한눈에 확인하는 교사용 리포트 */}
+            {/* 섹션 A: 학생별 누적 시간 & 언제 출석·결석했는지 한눈에 확인하는 교사용 리포트 */}
             <div className="bg-white rounded-3xl p-6 shadow-sm border-2 border-rose-200 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-3">
@@ -2467,10 +2537,10 @@ export default function HomePage() {
                   </div>
                   <div>
                     <h2 className="text-lg font-black text-slate-800">
-                      담임선생님용 학생별 누적 자습시간 & 결석 일자·사유 리포트 ({selectedMonth})
+                      담임선생님용 학생별 누적 자습시간 & 일자별 출석·결석 리포트 ({selectedMonth})
                     </h2>
                     <p className="text-xs font-semibold text-slate-500">
-                      각 학생이 이번 달 얼마나 자습했는지, 언제(몇 월 며칠 몇 교시) 어떤 사유로 결석했는지 한눈에 확인하실 수 있어요.
+                      다음 날 아침이나 주중에 확인하실 때 매일 기록된 출석 일자와 누적 시간, 결석 사유를 한눈에 확인하실 수 있어요.
                     </p>
                   </div>
                 </div>
@@ -2482,12 +2552,42 @@ export default function HomePage() {
                 />
               </div>
 
+              {/* 이번 달 누적 기록된 날짜 요약 배너 */}
+              <div className="flex flex-wrap items-center gap-2 p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200 text-xs">
+                <span className="font-black text-amber-950">
+                  📅 {selectedMonth} 출석 누적 기록된 날 ({recordedDates.length}일):
+                </span>
+                {recordedDates.length === 0 ? (
+                  <span className="text-slate-500 font-semibold">
+                    아직 기록된 날짜가 없습니다. [1. 오후 자습 출석표]에서 출석을 체크하거나 저장하면 날짜별로 누적됩니다.
+                  </span>
+                ) : (
+                  recordedDates.map((dStr) => (
+                    <button
+                      key={dStr}
+                      type="button"
+                      onClick={() => {
+                        handleDateChange(dStr);
+                        setActiveTab('attendance');
+                      }}
+                      className="px-3 py-1 rounded-full bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold transition shadow-sm"
+                      title={`${dStr} 출석표 확인하기`}
+                    >
+                      ✓ {dStr.slice(5)}
+                    </button>
+                  ))
+                )}
+              </div>
+
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-xs sm:text-sm rounded-2xl overflow-hidden">
                   <thead>
                     <tr className="bg-gradient-to-r from-rose-100 via-pink-100/80 to-amber-100 text-slate-800 font-extrabold border-b-2 border-rose-200">
                       <th className="py-3 px-4 text-left w-36">🐣 학생</th>
-                      <th className="py-3 px-4 text-left w-52">⏱️ 월 누적 자습시간</th>
+                      <th className="py-3 px-4 text-left w-48">⏱️ 월 누적 자습시간</th>
+                      <th className="py-3 px-4 text-left">
+                        🌱 일자별 누적 기록 (날짜별 8·9교시)
+                      </th>
                       <th className="py-3 px-4 text-left">
                         📅 언제 · 왜 결석했는지 (날짜 / 교시 / 사유 상세)
                       </th>
@@ -2499,13 +2599,44 @@ export default function HomePage() {
                         <td className="py-3.5 px-4 font-extrabold text-slate-800 whitespace-nowrap">
                           {stat.student.student_number}번 · {stat.student.name}
                         </td>
-                        <td className="py-3.5 px-4">
+                        <td className="py-3.5 px-4 whitespace-nowrap">
                           <div className="font-black text-emerald-700">
                             {formatMinutesToKorean(stat.totalMinutes)}
                           </div>
                           <div className="text-[11px] font-semibold text-slate-500">
-                            8교시 {stat.p8Attended}회 · 9교시 {stat.p9Attended}회 출석
+                            총 {stat.recordsCount}일 기록 (8교시 {stat.p8Attended}회 · 9교시 {stat.p9Attended}회 출석)
                           </div>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          {recordedDates.length === 0 ? (
+                            <span className="text-xs text-slate-400 font-semibold">기록 대기 중</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                              {recordedDates.map((dStr) => {
+                                const rec = attendanceByStudentAndDate.get(
+                                  `${stat.student.id}_${dStr}`
+                                );
+                                const p8 = rec?.period8_status || '-';
+                                const p9 = rec?.period9_status || '-';
+                                const bothPresent = p8 === '출석' && p9 === '출석';
+                                return (
+                                  <span
+                                    key={dStr}
+                                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-extrabold border ${
+                                      bothPresent
+                                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                        : 'bg-amber-50 text-amber-900 border-amber-200'
+                                    }`}
+                                  >
+                                    <strong>{dStr.slice(5)}:</strong>
+                                    <span>
+                                      {p8 === '출석' ? '8출' : `8${p8}`}·{p9 === '출석' ? '9출' : `9${p9}`}
+                                    </span>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
                         </td>
                         <td className="py-3.5 px-4">
                           {stat.absenceHistory.length === 0 ? (

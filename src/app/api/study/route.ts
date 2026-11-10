@@ -378,11 +378,46 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. 담임선생님 아침 확인 체크 (교사 전용)
+    // 3. 담임선생님 아침 확인 체크 (교사 전용 — 확인 도장 날인 시 해당 날짜 출석 기록이 아직 없으면 전원 출석 기준으로 자동 누적 저장)
     if (action === 'teacher_confirm_day') {
       const { studyDate, confirmed } = body;
       if (!studyDate) {
         return NextResponse.json({ error: '날짜가 필요합니다.' }, { status: 400 });
+      }
+
+      if (confirmed) {
+        const { data: existingAtt } = await scoped
+          .from('attendance_records')
+          .select('id')
+          .eq('classroom_id', session.classroomId)
+          .eq('study_date', studyDate)
+          .limit(1);
+
+        if (!existingAtt || existingAtt.length === 0) {
+          const { data: activeStudents } = await scoped
+            .from('students')
+            .select('id')
+            .eq('classroom_id', session.classroomId)
+            .eq('is_active', true);
+
+          if (activeStudents && activeStudents.length > 0) {
+            const autoAttPayload = activeStudents.map((st) => ({
+              classroom_id: session.classroomId,
+              owner_id: session.ownerId,
+              student_id: st.id,
+              study_date: studyDate,
+              period8_status: '출석',
+              period8_note: '',
+              period9_status: '출석',
+              period9_note: '',
+              updated_by_role: session.role,
+              updated_at: new Date().toISOString(),
+            }));
+            await scoped
+              .from('attendance_records')
+              .upsert(autoAttPayload, { onConflict: 'student_id,study_date' });
+          }
+        }
       }
 
       const { data: existing } = await scoped
