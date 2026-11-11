@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createAdminSupabase, createScopedSupabase, getServerSession } from '@/lib/supabase';
+import {
+  applySessionCookie,
+  createAdminSupabase,
+  createScopedSupabase,
+  getValidServerSession,
+} from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,9 +21,50 @@ function getMonthDateRange(monthStr: string): { startDate: string; endDate: stri
   return { startDate, endDate };
 }
 
+async function fetchClassroomStudyBundle(
+  accessToken: string,
+  classroomId: string,
+  startDate: string,
+  endDate: string
+) {
+  const scoped = createScopedSupabase(accessToken);
+  return Promise.all([
+    scoped
+      .from('classrooms')
+      .select('id, class_name, owner_id, created_at')
+      .eq('id', classroomId)
+      .single(),
+    scoped
+      .from('students')
+      .select('*')
+      .eq('classroom_id', classroomId)
+      .eq('is_active', true)
+      .order('student_number', { ascending: true })
+      .order('name', { ascending: true }),
+    scoped
+      .from('absence_reasons')
+      .select('*')
+      .eq('classroom_id', classroomId)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true }),
+    scoped
+      .from('attendance_records')
+      .select('*')
+      .eq('classroom_id', classroomId)
+      .gte('study_date', startDate)
+      .lte('study_date', endDate),
+    scoped
+      .from('supervisor_confirmations')
+      .select('*')
+      .eq('classroom_id', classroomId)
+      .gte('study_date', startDate)
+      .lte('study_date', endDate),
+  ]);
+}
+
 export async function GET(req: NextRequest) {
   try {
-    const session = getServerSession();
+    let { session, refreshedToken } = await getValidServerSession();
     if (!session) {
       return NextResponse.json(
         { error: '로그인이 필요합니다. 감독관 또는 담임교사 비밀번호로 로그인해 주세요.' },
@@ -32,46 +78,33 @@ export async function GET(req: NextRequest) {
     const monthParam = searchParams.get('month') || dateParam.slice(0, 7);
     const { startDate, endDate } = getMonthDateRange(monthParam);
 
-    const scoped = createScopedSupabase(session.accessToken);
+    let [classRes, studentsRes, reasonsRes, attRes, confRes] = await fetchClassroomStudyBundle(
+      session.accessToken,
+      session.classroomId,
+      startDate,
+      endDate
+    );
 
-    const [classRes, studentsRes, reasonsRes, attRes, confRes] = await Promise.all([
-      scoped
-        .from('classrooms')
-        .select('id, class_name, owner_id, created_at')
-        .eq('id', session.classroomId)
-        .single(),
-      scoped
-        .from('students')
-        .select('*')
-        .eq('classroom_id', session.classroomId)
-        .eq('is_active', true)
-        .order('student_number', { ascending: true })
-        .order('name', { ascending: true }),
-      scoped
-        .from('absence_reasons')
-        .select('*')
-        .eq('classroom_id', session.classroomId)
-        .order('sort_order', { ascending: true })
-        .order('created_at', { ascending: true }),
-      scoped
-        .from('attendance_records')
-        .select('*')
-        .eq('classroom_id', session.classroomId)
-        .gte('study_date', startDate)
-        .lte('study_date', endDate),
-      scoped
-        .from('supervisor_confirmations')
-        .select('*')
-        .eq('classroom_id', session.classroomId)
-        .gte('study_date', startDate)
-        .lte('study_date', endDate),
-    ]);
-
+    // 만약 JWT 만료 등 일시적 토큰 오류로 조회가 실패한 경우 즉시 강제 토큰 재발급 후 1회 재시도
     if (classRes.error) {
-      return NextResponse.json({ error: classRes.error.message }, { status: 403 });
+      const forced = await getValidServerSession(true);
+      if (forced.session) {
+        session = forced.session;
+        refreshedToken = forced.refreshedToken || refreshedToken;
+        [classRes, studentsRes, reasonsRes, attRes, confRes] = await fetchClassroomStudyBundle(
+          session.accessToken,
+          session.classroomId,
+          startDate,
+          endDate
+        );
+      }
     }
 
-    return NextResponse.json({
+    if (classRes.error) {
+      return NextResponse.json({ error: classRes.error.message }, { status: 401 });
+    }
+
+    const res = NextResponse.json({
       role: session.role,
       supervisorName: session.supervisorName || '',
       classroom: classRes.data,
@@ -82,6 +115,7 @@ export async function GET(req: NextRequest) {
       monthAttendance: attRes.data || [],
       monthConfirmations: confRes.data || [],
     });
+    return applySessionCookie(res, refreshedToken);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Server error';
     return NextResponse.json({ error: message }, { status: 500 });
@@ -90,13 +124,15 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = getServerSession();
+    const { session, refreshedToken } = await getValidServerSession();
     if (!session) {
       return NextResponse.json(
         { error: '로그인이 필요합니다.' },
         { status: 401 }
       );
     }
+
+    const withCookie = (res: NextResponse) => applySessionCookie(res, refreshedToken);
 
     const body = await req.json();
     const { action } = body;
@@ -106,9 +142,11 @@ export async function POST(req: NextRequest) {
     if (action === 'upsert_attendance') {
       const { studyDate, records } = body;
       if (!studyDate || !Array.isArray(records) || records.length === 0) {
-        return NextResponse.json(
-          { error: '저장할 날짜와 출석 데이터가 필요합니다.' },
-          { status: 400 }
+        return withCookie(
+          NextResponse.json(
+            { error: '저장할 날짜와 출석 데이터가 필요합니다.' },
+            { status: 400 }
+          )
         );
       }
 
@@ -175,7 +213,7 @@ export async function POST(req: NextRequest) {
           .upsert(toUpsertPayload, { onConflict: 'student_id,study_date' });
 
         if (upsertErr) {
-          return NextResponse.json({ error: upsertErr.message }, { status: 400 });
+          return withCookie(NextResponse.json({ error: upsertErr.message }, { status: 400 }));
         }
       }
 
@@ -186,16 +224,18 @@ export async function POST(req: NextRequest) {
         .eq('study_date', studyDate);
 
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return withCookie(NextResponse.json({ error: error.message }, { status: 400 }));
       }
-      return NextResponse.json({ ok: true, records: dateRecords || [] });
+      return withCookie(NextResponse.json({ ok: true, records: dateRecords || [] }));
     }
 
     // 1-1. 일별/교시별/개별학생 출석 초기화 및 출석 취소 (감독관 & 담임교사 모두 가능)
     if (action === 'reset_daily_attendance') {
       const { studyDate, studentId, period = 'all' } = body;
       if (!studyDate) {
-        return NextResponse.json({ error: '초기화할 날짜가 필요합니다.' }, { status: 400 });
+        return withCookie(
+          NextResponse.json({ error: '초기화할 날짜가 필요합니다.' }, { status: 400 })
+        );
       }
 
       const admin = createAdminSupabase();
@@ -212,7 +252,7 @@ export async function POST(req: NextRequest) {
         }
         const { error } = await query;
         if (error) {
-          return NextResponse.json({ error: error.message }, { status: 400 });
+          return withCookie(NextResponse.json({ error: error.message }, { status: 400 }));
         }
       } else if (period === 'period8' || period === 'period9') {
         const updateFields =
@@ -230,7 +270,7 @@ export async function POST(req: NextRequest) {
         }
         const { error: updErr } = await updQuery;
         if (updErr) {
-          return NextResponse.json({ error: updErr.message }, { status: 400 });
+          return withCookie(NextResponse.json({ error: updErr.message }, { status: 400 }));
         }
 
         // 8교시와 9교시 모두 빈 문자열이 된 레코드는 깔끔하게 삭제
@@ -250,14 +290,16 @@ export async function POST(req: NextRequest) {
         .eq('classroom_id', session.classroomId)
         .eq('study_date', studyDate);
 
-      return NextResponse.json({ ok: true, records: dateRecords || [] });
+      return withCookie(NextResponse.json({ ok: true, records: dateRecords || [] }));
     }
 
     // 1-2. 월별 전체 또는 특정 학생의 월간 출석 기록 초기화
     if (action === 'reset_monthly_attendance') {
       const { month, studentId } = body;
       if (!month) {
-        return NextResponse.json({ error: '초기화할 월(YYYY-MM)이 필요합니다.' }, { status: 400 });
+        return withCookie(
+          NextResponse.json({ error: '초기화할 월(YYYY-MM)이 필요합니다.' }, { status: 400 })
+        );
       }
       const { startDate, endDate } = getMonthDateRange(month);
       const admin = createAdminSupabase();
@@ -272,9 +314,9 @@ export async function POST(req: NextRequest) {
       }
       const { error } = await query;
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return withCookie(NextResponse.json({ error: error.message }, { status: 400 }));
       }
-      return NextResponse.json({ ok: true });
+      return withCookie(NextResponse.json({ ok: true }));
     }
 
     // 2. 감독 확인표 서명 및 특이사항 보고 (감독관 & 교사 모두 가능)
@@ -289,7 +331,7 @@ export async function POST(req: NextRequest) {
       } = body;
 
       if (!studyDate) {
-        return NextResponse.json({ error: '날짜가 필요합니다.' }, { status: 400 });
+        return withCookie(NextResponse.json({ error: '날짜가 필요합니다.' }, { status: 400 }));
       }
 
       const { data: existing } = await scoped
@@ -345,16 +387,18 @@ export async function POST(req: NextRequest) {
         .single();
 
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return withCookie(NextResponse.json({ error: error.message }, { status: 400 }));
       }
-      return NextResponse.json({ ok: true, confirmation: data });
+      return withCookie(NextResponse.json({ ok: true, confirmation: data }));
     }
 
     // 2-1. 일별 감독관 서명 및 담임 확인 초기화 (감독관 & 담임교사 모두 가능)
     if (action === 'reset_confirmation') {
       const { studyDate, target = 'all' } = body;
       if (!studyDate) {
-        return NextResponse.json({ error: '초기화할 날짜가 필요합니다.' }, { status: 400 });
+        return withCookie(
+          NextResponse.json({ error: '초기화할 날짜가 필요합니다.' }, { status: 400 })
+        );
       }
 
       const { data: existing } = await scoped
@@ -365,7 +409,7 @@ export async function POST(req: NextRequest) {
         .maybeSingle();
 
       if (!existing) {
-        return NextResponse.json({ ok: true, confirmation: null });
+        return withCookie(NextResponse.json({ ok: true, confirmation: null }));
       }
 
       const nowIso = new Date().toISOString();
@@ -412,16 +456,18 @@ export async function POST(req: NextRequest) {
         .single();
 
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return withCookie(NextResponse.json({ error: error.message }, { status: 400 }));
       }
-      return NextResponse.json({ ok: true, confirmation: data });
+      return withCookie(NextResponse.json({ ok: true, confirmation: data }));
     }
 
     // 아래 기능부터는 담임교사(관리자) 전용 권한 검사
     if (session.role !== 'teacher') {
-      return NextResponse.json(
-        { error: '담임교사(관리자)만 실행할 수 있는 기능입니다.' },
-        { status: 403 }
+      return withCookie(
+        NextResponse.json(
+          { error: '담임교사(관리자)만 실행할 수 있는 기능입니다.' },
+          { status: 403 }
+        )
       );
     }
 
@@ -429,7 +475,7 @@ export async function POST(req: NextRequest) {
     if (action === 'teacher_confirm_day') {
       const { studyDate, confirmed } = body;
       if (!studyDate) {
-        return NextResponse.json({ error: '날짜가 필요합니다.' }, { status: 400 });
+        return withCookie(NextResponse.json({ error: '날짜가 필요합니다.' }, { status: 400 }));
       }
 
       const { data: existing } = await scoped
@@ -463,16 +509,18 @@ export async function POST(req: NextRequest) {
         .single();
 
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return withCookie(NextResponse.json({ error: error.message }, { status: 400 }));
       }
-      return NextResponse.json({ ok: true, confirmation: data });
+      return withCookie(NextResponse.json({ ok: true, confirmation: data }));
     }
 
     // 4. 학생 개별 추가 (교사 전용)
     if (action === 'add_student') {
       const { name, studentNumber } = body;
       if (!name || !String(name).trim()) {
-        return NextResponse.json({ error: '학생 이름을 입력해 주세요.' }, { status: 400 });
+        return withCookie(
+          NextResponse.json({ error: '학생 이름을 입력해 주세요.' }, { status: 400 })
+        );
       }
 
       let nextNum = Number(studentNumber);
@@ -499,18 +547,20 @@ export async function POST(req: NextRequest) {
         .single();
 
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return withCookie(NextResponse.json({ error: error.message }, { status: 400 }));
       }
-      return NextResponse.json({ ok: true, student: data });
+      return withCookie(NextResponse.json({ ok: true, student: data }));
     }
 
     // 5. 학생 명단 일괄 등록/교체 (엑셀 복붙 지원, 교사 전용)
     if (action === 'bulk_add_students') {
       const { rawText, replaceExisting } = body;
       if (!rawText || !String(rawText).trim()) {
-        return NextResponse.json(
-          { error: '줄바꿈 또는 쉼표로 구분된 학생 명단을 입력해 주세요.' },
-          { status: 400 }
+        return withCookie(
+          NextResponse.json(
+            { error: '줄바꿈 또는 쉼표로 구분된 학생 명단을 입력해 주세요.' },
+            { status: 400 }
+          )
         );
       }
 
@@ -520,7 +570,9 @@ export async function POST(req: NextRequest) {
         .filter(Boolean);
 
       if (lines.length === 0) {
-        return NextResponse.json({ error: '유효한 학생 이름이 없습니다.' }, { status: 400 });
+        return withCookie(
+          NextResponse.json({ error: '유효한 학생 이름이 없습니다.' }, { status: 400 })
+        );
       }
 
       if (replaceExisting) {
@@ -564,16 +616,18 @@ export async function POST(req: NextRequest) {
         .select('*');
 
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return withCookie(NextResponse.json({ error: error.message }, { status: 400 }));
       }
-      return NextResponse.json({ ok: true, students: data });
+      return withCookie(NextResponse.json({ ok: true, students: data }));
     }
 
     // 6. 학생 정보 수정 (교사 전용)
     if (action === 'update_student') {
       const { studentId, name, studentNumber } = body;
       if (!studentId || !name || !String(name).trim()) {
-        return NextResponse.json({ error: '학생 ID와 이름이 필요합니다.' }, { status: 400 });
+        return withCookie(
+          NextResponse.json({ error: '학생 ID와 이름이 필요합니다.' }, { status: 400 })
+        );
       }
 
       const { data, error } = await scoped
@@ -588,16 +642,18 @@ export async function POST(req: NextRequest) {
         .single();
 
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return withCookie(NextResponse.json({ error: error.message }, { status: 400 }));
       }
-      return NextResponse.json({ ok: true, student: data });
+      return withCookie(NextResponse.json({ ok: true, student: data }));
     }
 
     // 7. 학생 삭제 (교사 전용)
     if (action === 'delete_student') {
       const { studentId } = body;
       if (!studentId) {
-        return NextResponse.json({ error: '삭제할 학생 ID가 필요합니다.' }, { status: 400 });
+        return withCookie(
+          NextResponse.json({ error: '삭제할 학생 ID가 필요합니다.' }, { status: 400 })
+        );
       }
 
       const { error } = await scoped
@@ -607,9 +663,9 @@ export async function POST(req: NextRequest) {
         .eq('classroom_id', session.classroomId);
 
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return withCookie(NextResponse.json({ error: error.message }, { status: 400 }));
       }
-      return NextResponse.json({ ok: true });
+      return withCookie(NextResponse.json({ ok: true }));
     }
 
     // 8. 결석(불참) 사유 추가 (교사 전용)
@@ -617,10 +673,17 @@ export async function POST(req: NextRequest) {
       const { label } = body;
       const cleanLabel = String(label || '').trim();
       if (!cleanLabel) {
-        return NextResponse.json({ error: '추가할 결석 사유 이름을 입력해 주세요.' }, { status: 400 });
+        return withCookie(
+          NextResponse.json({ error: '추가할 결석 사유 이름을 입력해 주세요.' }, { status: 400 })
+        );
       }
       if (cleanLabel === '출석') {
-        return NextResponse.json({ error: '"출석"은 결석 사유로 추가할 수 없습니다.' }, { status: 400 });
+        return withCookie(
+          NextResponse.json(
+            { error: '"출석"은 결석 사유로 추가할 수 없습니다.' },
+            { status: 400 }
+          )
+        );
       }
 
       const { data: currentReasons } = await scoped
@@ -645,19 +708,23 @@ export async function POST(req: NextRequest) {
         .single();
 
       if (error) {
-        return NextResponse.json(
-          { error: '이미 존재하는 사유이거나 추가할 수 없습니다.' },
-          { status: 400 }
+        return withCookie(
+          NextResponse.json(
+            { error: '이미 존재하는 사유이거나 추가할 수 없습니다.' },
+            { status: 400 }
+          )
         );
       }
-      return NextResponse.json({ ok: true, reason: data });
+      return withCookie(NextResponse.json({ ok: true, reason: data }));
     }
 
     // 9. 결석(불참) 사유 삭제 (교사 전용)
     if (action === 'delete_reason') {
       const { reasonId } = body;
       if (!reasonId) {
-        return NextResponse.json({ error: '삭제할 사유 ID가 필요합니다.' }, { status: 400 });
+        return withCookie(
+          NextResponse.json({ error: '삭제할 사유 ID가 필요합니다.' }, { status: 400 })
+        );
       }
 
       const { error } = await scoped
@@ -667,12 +734,14 @@ export async function POST(req: NextRequest) {
         .eq('classroom_id', session.classroomId);
 
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return withCookie(NextResponse.json({ error: error.message }, { status: 400 }));
       }
-      return NextResponse.json({ ok: true });
+      return withCookie(NextResponse.json({ ok: true }));
     }
 
-    return NextResponse.json({ error: '지원하지 않는 요청입니다.' }, { status: 400 });
+    return withCookie(
+      NextResponse.json({ error: '지원하지 않는 요청입니다.' }, { status: 400 })
+    );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Server error';
     return NextResponse.json({ error: message }, { status: 500 });

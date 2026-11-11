@@ -1,8 +1,10 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import crypto from 'node:crypto';
 import { cookies } from 'next/headers';
+import { NextResponse } from 'next/server';
 
 export const SESSION_COOKIE_NAME = 'letsstudy_session';
+export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7; // 7일 유지
 
 export interface SessionPayload {
   classroomId: string;
@@ -60,6 +62,12 @@ export function createAnonSupabase(): SupabaseClient {
   return createClient(getSupabaseUrl(), getSupabaseAnonKey(), {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+}
+
+export function deriveInternalAuthPassword(email: string): string {
+  const secret = process.env.SUPABASE_SERVICE_ROLE_KEY || 'internal-auth-secret';
+  const hmac = crypto.createHmac('sha256', secret).update(email).digest('hex').slice(0, 24);
+  return ` Auth!${hmac}9zZ `;
 }
 
 export function hashPassword(password: string): string {
@@ -122,4 +130,100 @@ export function getServerSession(): SessionPayload | null {
   const cookieStore = cookies();
   const raw = cookieStore.get(SESSION_COOKIE_NAME)?.value;
   return decodeSession(raw);
+}
+
+/**
+ * Supabase JWT(accessToken)의 만료 시각(exp)을 확인하여 만료되었거나 10분 이내에 만료되는지 검사
+ */
+export function isAccessTokenExpiredOrSoon(accessToken: string, bufferSeconds = 600): boolean {
+  if (!accessToken) return true;
+  const parts = accessToken.split('.');
+  if (parts.length !== 3) return true;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as {
+      exp?: number;
+    };
+    if (!payload.exp) return true;
+    const nowSec = Math.floor(Date.now() / 1000);
+    return nowSec >= payload.exp - bufferSeconds;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * 시간이 지나 Supabase JWT(기본 1시간)가 만료되었더라도,
+ * 세션 쿠키가 유효하면 자동으로 내부 인증 토큰을 재발급하여 끊김 없이 학생 명단과 출석표를 유지합니다.
+ */
+export async function getValidServerSession(forceRefresh = false): Promise<{
+  session: SessionPayload | null;
+  refreshedToken: string | null;
+}> {
+  const session = getServerSession();
+  if (!session) {
+    return { session: null, refreshedToken: null };
+  }
+
+  if (!forceRefresh && !isAccessTokenExpiredOrSoon(session.accessToken)) {
+    return { session, refreshedToken: null };
+  }
+
+  try {
+    const admin = createAdminSupabase();
+    const { data: classroom } = await admin
+      .from('classrooms')
+      .select('id, owner_id, supervisor_user_id')
+      .eq('id', session.classroomId)
+      .maybeSingle();
+
+    if (!classroom) {
+      return { session: null, refreshedToken: null };
+    }
+
+    const targetUserId =
+      session.role === 'teacher' ? classroom.owner_id : classroom.supervisor_user_id;
+    if (!targetUserId) {
+      return { session: null, refreshedToken: null };
+    }
+
+    const { data: userLookup, error: uErr } = await admin.auth.admin.getUserById(targetUserId);
+    if (uErr || !userLookup.user?.email) {
+      return { session, refreshedToken: null };
+    }
+
+    const internalPw = deriveInternalAuthPassword(userLookup.user.email);
+    const anon = createAnonSupabase();
+    const { data: signInData, error: signInErr } = await anon.auth.signInWithPassword({
+      email: userLookup.user.email,
+      password: internalPw,
+    });
+
+    if (signInErr || !signInData.session?.access_token) {
+      return { session, refreshedToken: null };
+    }
+
+    const refreshedSession: SessionPayload = {
+      ...session,
+      ownerId: classroom.owner_id,
+      accessToken: signInData.session.access_token,
+      exp: Date.now() + SESSION_MAX_AGE_SECONDS * 1000,
+    };
+
+    const refreshedToken = encodeSession(refreshedSession);
+    return { session: refreshedSession, refreshedToken };
+  } catch {
+    return { session, refreshedToken: null };
+  }
+}
+
+export function applySessionCookie(res: NextResponse, token: string | null): NextResponse {
+  if (!token) return res;
+  res.cookies.set(SESSION_COOKIE_NAME, token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: SESSION_MAX_AGE_SECONDS,
+  });
+  return res;
 }

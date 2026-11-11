@@ -225,8 +225,8 @@ export default function HomePage() {
   }, []);
 
   // 인증 상태 확인
-  const checkAuth = useCallback(async () => {
-    setAuthLoading(true);
+  const checkAuth = useCallback(async (silent = false) => {
+    if (!silent) setAuthLoading(true);
     try {
       const res = await fetch('/api/auth', { cache: 'no-store' });
       const data = await res.json();
@@ -237,17 +237,23 @@ export default function HomePage() {
         setAdminClassName(data.className);
       }
       if (data.authenticated) {
-        setRole(data.role || 'supervisor');
+        const nextRole: Role = data.role || 'supervisor';
+        setRole(nextRole);
         setSupervisorName(data.supervisorName || '');
         if (data.classroom?.class_name) {
           setClassName(data.classroom.class_name);
           setAdminClassName(data.classroom.class_name);
         }
+        // 오후 자습 감독관은 항상 학생 명단과 출석 여부를 체크할 수 있는 메인 출석표 화면으로 유지
+        if (nextRole === 'supervisor') {
+          setActiveTab('attendance');
+          setExcelCompactMode(false);
+        }
       }
     } catch {
       // ignore
     } finally {
-      setAuthLoading(false);
+      if (!silent) setAuthLoading(false);
     }
   }, []);
 
@@ -257,28 +263,54 @@ export default function HomePage() {
 
   const saveSeqRef = useRef(0);
 
-  // 학급 데이터 불러오기
+  // 학급 데이터 불러오기 (토큰 만료 시 자동 갱신 재시도 및 기존 학생 명단 증발 방지)
   const fetchStudyData = useCallback(
     async (targetMonth = selectedMonth, targetDate = selectedDate) => {
       if (!authenticated) return;
       setDataLoading(true);
       try {
-        const res = await fetch(
+        let res = await fetch(
           `/api/study?month=${encodeURIComponent(targetMonth)}&date=${encodeURIComponent(
             targetDate
           )}`,
           { cache: 'no-store' }
         );
+
+        // 시간이 지나 토큰 갱신이 필요한 경우 /api/auth 호출로 세션을 갱신한 뒤 즉시 1회 재시도
+        if (!res.ok) {
+          const authRes = await fetch('/api/auth', { cache: 'no-store' });
+          const authData = await authRes.json().catch(() => ({}));
+          if (!authData.authenticated) {
+            setAuthenticated(false);
+            return;
+          }
+          res = await fetch(
+            `/api/study?month=${encodeURIComponent(targetMonth)}&date=${encodeURIComponent(
+              targetDate
+            )}`,
+            { cache: 'no-store' }
+          );
+        }
+
         if (res.status === 401) {
           setAuthenticated(false);
           return;
         }
+
         const data = await res.json();
         if (res.ok) {
-          setStudents(data.students || []);
-          setReasons(data.reasons || []);
-          setMonthAttendance(data.monthAttendance || []);
-          setMonthConfirmations(data.monthConfirmations || []);
+          if (Array.isArray(data.students)) {
+            setStudents(data.students);
+          }
+          if (Array.isArray(data.reasons)) {
+            setReasons(data.reasons);
+          }
+          if (Array.isArray(data.monthAttendance)) {
+            setMonthAttendance(data.monthAttendance);
+          }
+          if (Array.isArray(data.monthConfirmations)) {
+            setMonthConfirmations(data.monthConfirmations);
+          }
           if (data.classroom?.class_name) {
             setClassName(data.classroom.class_name);
             setAdminClassName(data.classroom.class_name);
@@ -297,6 +329,55 @@ export default function HomePage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, selectedMonth]);
+
+  // 시간이 지나도 세션/명단이 끊기지 않도록 주기적 갱신 & 감독관 화면을 항상 '오후 자습 출석표(버튼 체크형)'로 유지
+  useEffect(() => {
+    if (!authenticated) return;
+
+    const refreshAndKeepSupervisorMain = () => {
+      if (role === 'supervisor') {
+        setActiveTab('attendance');
+        setExcelCompactMode(false);
+      }
+      fetchStudyData(selectedMonth, selectedDate);
+    };
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        refreshAndKeepSupervisorMain();
+      }
+    };
+
+    // 3분마다 백그라운드에서 세션 및 학생 명단·출석 데이터 자동 동기화
+    const keepAliveTimer = window.setInterval(() => {
+      fetchStudyData(selectedMonth, selectedDate);
+      if (role === 'supervisor') {
+        setExcelCompactMode(false);
+      }
+    }, 1000 * 60 * 3);
+
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
+    return () => {
+      window.clearInterval(keepAliveTimer);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+    };
+  }, [authenticated, role, selectedMonth, selectedDate, fetchStudyData]);
+
+  // 오후 자습 감독관이 다른 탭이나 인쇄 미리보기 모드를 눌러두었더라도 일정 시간(90초) 후 자동으로 학생 명단 출석표 메인화면으로 복귀
+  useEffect(() => {
+    if (!authenticated || role !== 'supervisor') return;
+    if (activeTab === 'attendance' && !excelCompactMode) return;
+
+    const returnTimer = window.setTimeout(() => {
+      setActiveTab('attendance');
+      setExcelCompactMode(false);
+    }, 1000 * 90);
+
+    return () => window.clearTimeout(returnTimer);
+  }, [authenticated, role, activeTab, excelCompactMode]);
 
   // 날짜 변경 시 월이 바뀌면 selectedMonth도 동기화
   const handleDateChange = (nextDate: string) => {
@@ -1506,7 +1587,10 @@ export default function HomePage() {
           <div className="max-w-7xl mx-auto px-4 flex overflow-x-auto gap-2 py-2">
             <button
               type="button"
-              onClick={() => setActiveTab('attendance')}
+              onClick={() => {
+                setActiveTab('attendance');
+                setExcelCompactMode(false);
+              }}
               className={`px-4 py-2 rounded-2xl text-xs font-extrabold whitespace-nowrap transition flex items-center gap-1.5 ${
                 activeTab === 'attendance'
                   ? 'bg-amber-300 text-amber-950 shadow-sm border border-amber-400/60'
@@ -1514,7 +1598,7 @@ export default function HomePage() {
               }`}
             >
               <span>📋</span>
-              1. 오후 자습 출석표 (8·9교시 체크)
+              1. 오후 자습 출석표 (학생 명단 · 8·9교시 체크 메인)
             </button>
 
             <button
@@ -1563,10 +1647,438 @@ export default function HomePage() {
 
       {/* 본문 영역 */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 space-y-6">
+        {/* 감독관이 다른 탭을 보고 있거나 인쇄형 요약 모드일 때 언제든 즉시 학생 명단 출석표로 복귀하는 고정 안내 바 */}
+        {(activeTab !== 'attendance' || excelCompactMode) && (
+          <div className="bg-gradient-to-r from-amber-100 via-yellow-100 to-rose-100 border-2 border-amber-300 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-2 shadow-sm no-print">
+            <div className="flex items-center gap-2 text-xs sm:text-sm font-extrabold text-amber-950">
+              <span>🐣</span>
+              <span>
+                {excelCompactMode
+                  ? '현재 인쇄용 요약 표 보기 상태입니다. 학생별 출석 여부를 체크하려면 버튼형 출석표로 전환해 주세요!'
+                  : '학생 명단과 8·9교시 출석 여부를 체크하는 메인 출석표 화면으로 바로 이동할 수 있어요!'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('attendance');
+                setExcelCompactMode(false);
+              }}
+              className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-slate-900 font-black text-xs shadow-sm transition flex items-center gap-1.5"
+            >
+              <span>📋</span>
+              학생 명단 · 오후 자습 출석표(체크 화면)로 돌아가기
+            </button>
+          </div>
+        )}
+
         {/* ==================== TAB 1: 오후 자습 출석표 (불참 시 사유작성) ==================== */}
         {activeTab === 'attendance' && (
           <div className="space-y-6">
-            {/* 상단 날짜 선택 카드 & 파스텔 민트 칠판 현황판 */}
+            {/* [최상단 메인 고정] 첨부 사진 2번 스타일: 학생 명단과 8·9교시 출석 여부를 체크하는 오후 자습 출석표 */}
+            <div className="bg-white rounded-3xl shadow-[0_10px_35px_rgb(0,0,0,0.04)] border-2 border-amber-200 overflow-hidden">
+              <div className="bg-gradient-to-r from-[#FFF6CC] via-[#FFF0D4] to-[#FFE8EC] border-b-2 border-amber-200 px-6 py-4 flex flex-col gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-2xl">📋</span>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="text-lg sm:text-xl font-black text-slate-800">
+                          오후 자습 출석표 (불참 시 사유작성)
+                        </h2>
+                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-500 text-white text-xs font-black">
+                          총원 {dailySummary.total}명 · 8교시 출석 {dailySummary.p8Present}명 / 9교시 출석{' '}
+                          {dailySummary.p9Present}명
+                        </span>
+                      </div>
+                      <p className="text-xs font-bold text-slate-600 mt-0.5">
+                        📅 {selectedDate} · 이미 선택된 버튼을 한 번 더 누르거나 [✕ 취소] / [↩️ 출석취소]를 누르면 즉시 출석이 취소돼요!
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 상단 날짜 이동 및 빠른 출석 체크 버튼 그룹 */}
+                  <div className="flex flex-wrap items-center gap-2 no-print">
+                    <div className="inline-flex items-center gap-1 bg-white/90 px-2 py-1 rounded-2xl border-2 border-amber-200">
+                      <button
+                        type="button"
+                        onClick={() => shiftDateByDays(-1)}
+                        className="p-1.5 rounded-xl hover:bg-amber-100 text-amber-800 transition"
+                        title="이전 날짜"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <input
+                        type="date"
+                        value={selectedDate}
+                        onChange={(e) => handleDateChange(e.target.value)}
+                        className="px-2 py-1 font-black text-xs sm:text-sm text-slate-800 bg-transparent focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => shiftDateByDays(1)}
+                        className="p-1.5 rounded-xl hover:bg-amber-100 text-amber-800 transition"
+                        title="다음 날짜"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDateChange(formatLocalDate(new Date()))}
+                        className="px-2 py-1 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-[11px] font-extrabold transition"
+                      >
+                        오늘
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleMarkAllPresent('all')}
+                      disabled={savingAttendance}
+                      className="px-3.5 py-2 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-extrabold shadow-sm transition"
+                    >
+                      🌱 8·9교시 전원 출석
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCopyPeriod8ToPeriod9}
+                      className="px-3 py-2 rounded-2xl bg-white hover:bg-emerald-50 text-emerald-800 border-2 border-emerald-200 text-xs font-extrabold shadow-sm transition"
+                    >
+                      🐰 8교시 → 9교시 복사
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleResetDailyAttendance(selectedDate, 'all')}
+                      disabled={savingAttendance}
+                      className="px-3 py-2 rounded-2xl bg-white hover:bg-rose-50 text-rose-600 text-xs font-extrabold border-2 border-rose-200 shadow-sm transition"
+                    >
+                      🔄 오늘 출석 전체 초기화
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveAllDailyAttendance}
+                      disabled={savingAttendance}
+                      className="px-3.5 py-2 rounded-2xl bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-black flex items-center gap-1 shadow-sm transition"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      {savingAttendance ? '저장 중...' : '전체 출석표 저장 ✨'}
+                    </button>
+                    {role === 'teacher' && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('admin')}
+                        className="px-3.5 py-2 rounded-2xl bg-white hover:bg-amber-50 text-amber-900 text-xs font-extrabold border-2 border-amber-200 shadow-sm transition"
+                      >
+                        + 학생 명단 / 사유 관리 👩‍🏫
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="bg-amber-50/70 border-b-2 border-amber-200 text-slate-800 font-extrabold">
+                      <th className="py-3.5 px-4 border-r border-amber-100 w-36 text-center">
+                        🐣 학생 이름
+                      </th>
+                      <th className="py-3.5 px-3 border-r border-amber-100 w-36 text-center">
+                        ⏱️ {Number(selectedMonth.split('-')[1])}월 누적 시간
+                      </th>
+                      <th className="py-3 px-4 border-r border-amber-100 text-center">
+                        <div className="flex flex-col items-center gap-1">
+                          <div>
+                            8교시{' '}
+                            <span className="text-xs font-bold text-amber-700">
+                              (16:20~17:10)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 no-print">
+                            <button
+                              type="button"
+                              onClick={() => handleMarkAllPresent(8)}
+                              className="px-2 py-0.5 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[10px] font-black transition"
+                            >
+                              🌱 8교시 전원출석
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleResetDailyAttendance(selectedDate, 'period8')}
+                              className="px-2 py-0.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-700 text-[10px] font-black transition"
+                            >
+                              🔄 8교시 초기화
+                            </button>
+                          </div>
+                        </div>
+                      </th>
+                      <th className="py-3 px-4 border-r border-amber-100 text-center">
+                        <div className="flex flex-col items-center gap-1">
+                          <div>
+                            9교시{' '}
+                            <span className="text-xs font-bold text-rose-600">
+                              (17:20~18:10)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 no-print">
+                            <button
+                              type="button"
+                              onClick={() => handleMarkAllPresent(9)}
+                              className="px-2 py-0.5 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[10px] font-black transition"
+                            >
+                              🍀 9교시 전원출석
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleResetDailyAttendance(selectedDate, 'period9')}
+                              className="px-2 py-0.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-700 text-[10px] font-black transition"
+                            >
+                              🔄 9교시 초기화
+                            </button>
+                          </div>
+                        </div>
+                      </th>
+                      <th className="py-3.5 px-4 w-64 text-center no-print">
+                        ✏️ 한줄 메모 & 개별 출석취소
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-amber-100/80">
+                    {students.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-12 px-4 text-center">
+                          <div className="flex flex-col items-center gap-3">
+                            <RefreshCw
+                              className={`w-6 h-6 text-amber-500 ${
+                                dataLoading ? 'animate-spin' : ''
+                              }`}
+                            />
+                            <p className="text-sm font-extrabold text-slate-700">
+                              {dataLoading
+                                ? '우리 반 학생 명단과 출석표를 불러오고 있어요...'
+                                : '학생 명단을 다시 불러와 주세요.'}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => fetchStudyData(selectedMonth, selectedDate)}
+                              className="px-4 py-2 rounded-2xl bg-amber-300 hover:bg-amber-400 text-amber-950 text-xs font-black transition"
+                            >
+                              🔄 학생 명단 즉시 다시 불러오기
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      students.map((st) => {
+                        const row = dailyDraft[st.id] || {
+                          period8Status: '',
+                          period8Note: '',
+                          period9Status: '',
+                          period9Note: '',
+                        };
+                        const stStat = statsByStudentId.get(st.id);
+                        const options = ['출석', ...reasons.map((r) => r.label)];
+                        const hasAnyStatus = Boolean(
+                          row.period8Status || row.period9Status || row.period8Note
+                        );
+
+                        return (
+                          <tr
+                            key={st.id}
+                            className="hover:bg-amber-50/40 transition"
+                          >
+                            <td className="py-3 px-4 border-r border-amber-100 font-extrabold text-slate-800 text-center whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => setDetailStudentId(st.id)}
+                                className="hover:text-rose-500 inline-flex items-center gap-1.5 group"
+                                title="클릭하여 월별 누적 자습시간 및 결석 이력 보기"
+                              >
+                                <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-black inline-flex items-center justify-center group-hover:bg-rose-100 group-hover:text-rose-700 transition">
+                                  {st.student_number}
+                                </span>
+                                <span>{st.name}</span>
+                              </button>
+                            </td>
+
+                            {/* 실시간 월 누적 자습시간 칸 */}
+                            <td className="py-2.5 px-3 border-r border-amber-100 text-center whitespace-nowrap bg-amber-50/20">
+                              <button
+                                type="button"
+                                onClick={() => setDetailStudentId(st.id)}
+                                className="inline-flex flex-col items-center"
+                              >
+                                <span className="text-xs font-black text-emerald-700">
+                                  {formatMinutesToKorean(stStat?.totalMinutes || 0)}
+                                </span>
+                                <span className="text-[10px] font-bold text-slate-400">
+                                  누적 {stStat?.totalAttendedPeriods || 0}교시
+                                </span>
+                              </button>
+                            </td>
+
+                            {/* 8교시 칸 */}
+                            <td className="py-2.5 px-3 border-r border-amber-100 text-center">
+                              {excelCompactMode ? (
+                                !row.period8Status ? (
+                                  <span className="text-xs font-bold text-slate-300">-</span>
+                                ) : (
+                                  <span
+                                    className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-extrabold ${
+                                      row.period8Status === '출석'
+                                        ? 'bg-emerald-100 text-emerald-800'
+                                        : 'bg-rose-100 text-rose-700'
+                                    }`}
+                                  >
+                                    {getReasonEmoji(row.period8Status)}{' '}
+                                    {row.period8Status === '출석' ? '출석' : row.period8Status}
+                                  </span>
+                                )
+                              ) : (
+                                <div className="flex flex-wrap items-center justify-center gap-1.5">
+                                  {options.map((opt) => {
+                                    const selected = row.period8Status === opt;
+                                    const isPresent = opt === '출석';
+                                    return (
+                                      <button
+                                        key={opt}
+                                        type="button"
+                                        onClick={() => handleSelectPeriodStatus(st.id, 8, opt)}
+                                        title={
+                                          selected
+                                            ? '다시 클릭하면 8교시 출석/사유가 취소됩니다'
+                                            : `${opt} 선택`
+                                        }
+                                        className={`px-3 py-1.5 rounded-full text-xs font-extrabold transition border ${
+                                          selected
+                                            ? isPresent
+                                              ? 'bg-emerald-400 text-white border-emerald-500 shadow-sm scale-105'
+                                              : 'bg-rose-400 text-white border-rose-500 shadow-sm scale-105'
+                                            : 'bg-white text-slate-500 border-slate-200 hover:border-amber-300 hover:bg-amber-50/50 hover:text-slate-800'
+                                        }`}
+                                      >
+                                        {getReasonEmoji(opt)} {opt}
+                                      </button>
+                                    );
+                                  })}
+                                  {row.period8Status && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSelectPeriodStatus(st.id, 8, '')}
+                                      className="px-2.5 py-1.5 rounded-full text-[11px] font-black bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 border border-slate-200 hover:border-rose-300 transition"
+                                      title="8교시 출석/사유 취소"
+                                    >
+                                      ✕ 취소
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+
+                            {/* 9교시 칸 */}
+                            <td className="py-2.5 px-3 border-r border-amber-100 text-center">
+                              {excelCompactMode ? (
+                                !row.period9Status ? (
+                                  <span className="text-xs font-bold text-slate-300">-</span>
+                                ) : (
+                                  <span
+                                    className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-extrabold ${
+                                      row.period9Status === '출석'
+                                        ? 'bg-emerald-100 text-emerald-800'
+                                        : 'bg-rose-100 text-rose-700'
+                                    }`}
+                                  >
+                                    {getReasonEmoji(row.period9Status)}{' '}
+                                    {row.period9Status === '출석' ? '출석' : row.period9Status}
+                                  </span>
+                                )
+                              ) : (
+                                <div className="flex flex-wrap items-center justify-center gap-1.5">
+                                  {options.map((opt) => {
+                                    const selected = row.period9Status === opt;
+                                    const isPresent = opt === '출석';
+                                    return (
+                                      <button
+                                        key={opt}
+                                        type="button"
+                                        onClick={() => handleSelectPeriodStatus(st.id, 9, opt)}
+                                        title={
+                                          selected
+                                            ? '다시 클릭하면 9교시 출석/사유가 취소됩니다'
+                                            : `${opt} 선택`
+                                        }
+                                        className={`px-3 py-1.5 rounded-full text-xs font-extrabold transition border ${
+                                          selected
+                                            ? isPresent
+                                              ? 'bg-emerald-400 text-white border-emerald-500 shadow-sm scale-105'
+                                              : 'bg-rose-400 text-white border-rose-500 shadow-sm scale-105'
+                                            : 'bg-white text-slate-500 border-slate-200 hover:border-amber-300 hover:bg-amber-50/50 hover:text-slate-800'
+                                        }`}
+                                      >
+                                        {getReasonEmoji(opt)} {opt}
+                                      </button>
+                                    );
+                                  })}
+                                  {row.period9Status && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSelectPeriodStatus(st.id, 9, '')}
+                                      className="px-2.5 py-1.5 rounded-full text-[11px] font-black bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 border border-slate-200 hover:border-rose-300 transition"
+                                      title="9교시 출석/사유 취소"
+                                    >
+                                      ✕ 취소
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+
+                            {/* 상세 메모 & 개별 학생 당일 출석취소 칸 */}
+                            <td className="py-2 px-3 no-print">
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="text"
+                                  value={row.period8Note}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setDailyDraft((prev) => ({
+                                      ...prev,
+                                      [st.id]: {
+                                        ...row,
+                                        period8Note: val,
+                                        period9Note: val,
+                                      },
+                                    }));
+                                  }}
+                                  onBlur={handleSaveAllDailyAttendance}
+                                  placeholder="상세 사유 메모 ✏️"
+                                  className="flex-1 min-w-0 px-3 py-1.5 text-xs font-medium rounded-xl border border-amber-200/80 bg-amber-50/20 focus:bg-white focus:ring-2 focus:ring-amber-300 focus:outline-none"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleCancelStudentDailyAttendance(st.id, st.name)}
+                                  disabled={!hasAnyStatus}
+                                  className={`px-2.5 py-1.5 rounded-xl text-[11px] font-black whitespace-nowrap border transition ${
+                                    hasAnyStatus
+                                      ? 'bg-rose-50 hover:bg-rose-100 text-rose-600 border-rose-200'
+                                      : 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed'
+                                  }`}
+                                  title={`${st.name} 학생의 오늘(8·9교시) 출석 기록 취소`}
+                                >
+                                  ↩️ 출석취소
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* 하단 보조: 날짜 선택 카드 & 파스텔 민트 칠판 현황판 (자습 현황 요약) */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 no-print">
               <div className="bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-2 border-amber-200/80 flex flex-col justify-between">
                 <div className="flex items-center justify-between">
@@ -1629,41 +2141,6 @@ export default function HomePage() {
                     <span className="text-sm font-extrabold text-emerald-950">
                       {selectedDate} 자습 현황 (우리 반 총원 {dailySummary.total}명)
                     </span>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handleMarkAllPresent('all')}
-                      disabled={savingAttendance}
-                      className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-black transition shadow-sm"
-                    >
-                      🌱 8·9교시 전원 출석
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCopyPeriod8ToPeriod9}
-                      className="px-3 py-1.5 rounded-xl bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-extrabold transition shadow-sm"
-                    >
-                      🐰 8교시 → 9교시 복사
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleResetDailyAttendance(selectedDate, 'all')}
-                      disabled={savingAttendance}
-                      className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-extrabold flex items-center gap-1 transition shadow-sm"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      오늘 출석 전체 초기화
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSaveAllDailyAttendance}
-                      disabled={savingAttendance}
-                      className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-black flex items-center gap-1.5 shadow-sm transition"
-                    >
-                      <Save className="w-3.5 h-3.5" />
-                      {savingAttendance ? '저장 중...' : '전체 출석표 저장 ✨'}
-                    </button>
                   </div>
                 </div>
 
@@ -1829,323 +2306,6 @@ export default function HomePage() {
                     </span>
                   ))
                 )}
-              </div>
-            </div>
-
-            {/* 첨부 사진 2번 스타일: 밝고 귀여운 오후 자습 출석표 (불참 시 사유작성) */}
-            <div className="bg-white rounded-3xl shadow-[0_10px_35px_rgb(0,0,0,0.04)] border-2 border-amber-200 overflow-hidden">
-              <div className="bg-gradient-to-r from-[#FFF6CC] via-[#FFF0D4] to-[#FFE8EC] border-b-2 border-amber-200 px-6 py-4 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2.5">
-                  <span className="text-2xl">📋</span>
-                  <div>
-                    <h2 className="text-lg sm:text-xl font-black text-slate-800">
-                      오후 자습 출석표 (불참 시 사유작성)
-                    </h2>
-                    <p className="text-xs font-bold text-slate-600 mt-0.5">
-                      📅 {selectedDate} · 이미 선택된 버튼을 한 번 더 누르거나 [✕ 취소] / [↩️ 출석취소]를 누르면 즉시 출석이 취소돼요!
-                    </p>
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 no-print">
-                  <button
-                    type="button"
-                    onClick={() => handleMarkAllPresent('all')}
-                    className="px-3.5 py-2 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-extrabold shadow-sm transition"
-                  >
-                    🌱 전원 출석 일괄 체크
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleResetDailyAttendance(selectedDate, 'all')}
-                    className="px-3.5 py-2 rounded-2xl bg-white hover:bg-rose-50 text-rose-600 text-xs font-extrabold border-2 border-rose-200 shadow-sm transition"
-                  >
-                    🔄 오늘 출석 전체 초기화
-                  </button>
-                  {role === 'teacher' && (
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('admin')}
-                      className="px-3.5 py-2 rounded-2xl bg-white hover:bg-amber-50 text-amber-900 text-xs font-extrabold border-2 border-amber-200 shadow-sm transition"
-                    >
-                      + 학생 명단 / 사유 관리 👩‍🏫
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-sm">
-                  <thead>
-                    <tr className="bg-amber-50/70 border-b-2 border-amber-200 text-slate-800 font-extrabold">
-                      <th className="py-3.5 px-4 border-r border-amber-100 w-36 text-center">
-                        🐣 학생 이름
-                      </th>
-                      <th className="py-3.5 px-3 border-r border-amber-100 w-36 text-center">
-                        ⏱️ {Number(selectedMonth.split('-')[1])}월 누적 시간
-                      </th>
-                      <th className="py-3 px-4 border-r border-amber-100 text-center">
-                        <div className="flex flex-col items-center gap-1">
-                          <div>
-                            8교시{' '}
-                            <span className="text-xs font-bold text-amber-700">
-                              (16:20~17:10)
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1 no-print">
-                            <button
-                              type="button"
-                              onClick={() => handleMarkAllPresent(8)}
-                              className="px-2 py-0.5 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[10px] font-black transition"
-                            >
-                              🌱 8교시 전원출석
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleResetDailyAttendance(selectedDate, 'period8')}
-                              className="px-2 py-0.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-700 text-[10px] font-black transition"
-                            >
-                              🔄 8교시 초기화
-                            </button>
-                          </div>
-                        </div>
-                      </th>
-                      <th className="py-3 px-4 border-r border-amber-100 text-center">
-                        <div className="flex flex-col items-center gap-1">
-                          <div>
-                            9교시{' '}
-                            <span className="text-xs font-bold text-rose-600">
-                              (17:20~18:10)
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1 no-print">
-                            <button
-                              type="button"
-                              onClick={() => handleMarkAllPresent(9)}
-                              className="px-2 py-0.5 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[10px] font-black transition"
-                            >
-                              🍀 9교시 전원출석
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleResetDailyAttendance(selectedDate, 'period9')}
-                              className="px-2 py-0.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-700 text-[10px] font-black transition"
-                            >
-                              🔄 9교시 초기화
-                            </button>
-                          </div>
-                        </div>
-                      </th>
-                      <th className="py-3.5 px-4 w-64 text-center no-print">
-                        ✏️ 한줄 메모 & 개별 출석취소
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-amber-100/80">
-                    {students.map((st) => {
-                      const row = dailyDraft[st.id] || {
-                        period8Status: '',
-                        period8Note: '',
-                        period9Status: '',
-                        period9Note: '',
-                      };
-                      const stStat = statsByStudentId.get(st.id);
-                      const options = ['출석', ...reasons.map((r) => r.label)];
-                      const hasAnyStatus = Boolean(
-                        row.period8Status || row.period9Status || row.period8Note
-                      );
-
-                      return (
-                        <tr
-                          key={st.id}
-                          className="hover:bg-amber-50/40 transition"
-                        >
-                          <td className="py-3 px-4 border-r border-amber-100 font-extrabold text-slate-800 text-center whitespace-nowrap">
-                            <button
-                              type="button"
-                              onClick={() => setDetailStudentId(st.id)}
-                              className="hover:text-rose-500 inline-flex items-center gap-1.5 group"
-                              title="클릭하여 월별 누적 자습시간 및 결석 이력 보기"
-                            >
-                              <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-black inline-flex items-center justify-center group-hover:bg-rose-100 group-hover:text-rose-700 transition">
-                                {st.student_number}
-                              </span>
-                              <span>{st.name}</span>
-                            </button>
-                          </td>
-
-                          {/* 실시간 월 누적 자습시간 칸 */}
-                          <td className="py-2.5 px-3 border-r border-amber-100 text-center whitespace-nowrap bg-amber-50/20">
-                            <button
-                              type="button"
-                              onClick={() => setDetailStudentId(st.id)}
-                              className="inline-flex flex-col items-center"
-                            >
-                              <span className="text-xs font-black text-emerald-700">
-                                {formatMinutesToKorean(stStat?.totalMinutes || 0)}
-                              </span>
-                              <span className="text-[10px] font-bold text-slate-400">
-                                누적 {stStat?.totalAttendedPeriods || 0}교시
-                              </span>
-                            </button>
-                          </td>
-
-                          {/* 8교시 칸 */}
-                          <td className="py-2.5 px-3 border-r border-amber-100 text-center">
-                            {excelCompactMode ? (
-                              !row.period8Status ? (
-                                <span className="text-xs font-bold text-slate-300">-</span>
-                              ) : (
-                                <span
-                                  className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-extrabold ${
-                                    row.period8Status === '출석'
-                                      ? 'bg-emerald-100 text-emerald-800'
-                                      : 'bg-rose-100 text-rose-700'
-                                  }`}
-                                >
-                                  {getReasonEmoji(row.period8Status)}{' '}
-                                  {row.period8Status === '출석' ? '출석' : row.period8Status}
-                                </span>
-                              )
-                            ) : (
-                              <div className="flex flex-wrap items-center justify-center gap-1.5">
-                                {options.map((opt) => {
-                                  const selected = row.period8Status === opt;
-                                  const isPresent = opt === '출석';
-                                  return (
-                                    <button
-                                      key={opt}
-                                      type="button"
-                                      onClick={() => handleSelectPeriodStatus(st.id, 8, opt)}
-                                      title={
-                                        selected
-                                          ? '다시 클릭하면 8교시 출석/사유가 취소됩니다'
-                                          : `${opt} 선택`
-                                      }
-                                      className={`px-3 py-1.5 rounded-full text-xs font-extrabold transition border ${
-                                        selected
-                                          ? isPresent
-                                            ? 'bg-emerald-400 text-white border-emerald-500 shadow-sm scale-105'
-                                            : 'bg-rose-400 text-white border-rose-500 shadow-sm scale-105'
-                                          : 'bg-white text-slate-500 border-slate-200 hover:border-amber-300 hover:bg-amber-50/50 hover:text-slate-800'
-                                      }`}
-                                    >
-                                      {getReasonEmoji(opt)} {opt}
-                                    </button>
-                                  );
-                                })}
-                                {row.period8Status && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleSelectPeriodStatus(st.id, 8, '')}
-                                    className="px-2.5 py-1.5 rounded-full text-[11px] font-black bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 border border-slate-200 hover:border-rose-300 transition"
-                                    title="8교시 출석/사유 취소"
-                                  >
-                                    ✕ 취소
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </td>
-
-                          {/* 9교시 칸 */}
-                          <td className="py-2.5 px-3 border-r border-amber-100 text-center">
-                            {excelCompactMode ? (
-                              !row.period9Status ? (
-                                <span className="text-xs font-bold text-slate-300">-</span>
-                              ) : (
-                                <span
-                                  className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-extrabold ${
-                                    row.period9Status === '출석'
-                                      ? 'bg-emerald-100 text-emerald-800'
-                                      : 'bg-rose-100 text-rose-700'
-                                  }`}
-                                >
-                                  {getReasonEmoji(row.period9Status)}{' '}
-                                  {row.period9Status === '출석' ? '출석' : row.period9Status}
-                                </span>
-                              )
-                            ) : (
-                              <div className="flex flex-wrap items-center justify-center gap-1.5">
-                                {options.map((opt) => {
-                                  const selected = row.period9Status === opt;
-                                  const isPresent = opt === '출석';
-                                  return (
-                                    <button
-                                      key={opt}
-                                      type="button"
-                                      onClick={() => handleSelectPeriodStatus(st.id, 9, opt)}
-                                      title={
-                                        selected
-                                          ? '다시 클릭하면 9교시 출석/사유가 취소됩니다'
-                                          : `${opt} 선택`
-                                      }
-                                      className={`px-3 py-1.5 rounded-full text-xs font-extrabold transition border ${
-                                        selected
-                                          ? isPresent
-                                            ? 'bg-emerald-400 text-white border-emerald-500 shadow-sm scale-105'
-                                            : 'bg-rose-400 text-white border-rose-500 shadow-sm scale-105'
-                                          : 'bg-white text-slate-500 border-slate-200 hover:border-amber-300 hover:bg-amber-50/50 hover:text-slate-800'
-                                      }`}
-                                    >
-                                      {getReasonEmoji(opt)} {opt}
-                                    </button>
-                                  );
-                                })}
-                                {row.period9Status && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleSelectPeriodStatus(st.id, 9, '')}
-                                    className="px-2.5 py-1.5 rounded-full text-[11px] font-black bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 border border-slate-200 hover:border-rose-300 transition"
-                                    title="9교시 출석/사유 취소"
-                                  >
-                                    ✕ 취소
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </td>
-
-                          {/* 상세 메모 & 개별 학생 당일 출석취소 칸 */}
-                          <td className="py-2 px-3 no-print">
-                            <div className="flex items-center gap-1.5">
-                              <input
-                                type="text"
-                                value={row.period8Note}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setDailyDraft((prev) => ({
-                                    ...prev,
-                                    [st.id]: {
-                                      ...row,
-                                      period8Note: val,
-                                      period9Note: val,
-                                    },
-                                  }));
-                                }}
-                                onBlur={handleSaveAllDailyAttendance}
-                                placeholder="상세 사유 메모 ✏️"
-                                className="flex-1 min-w-0 px-3 py-1.5 text-xs font-medium rounded-xl border border-amber-200/80 bg-amber-50/20 focus:bg-white focus:ring-2 focus:ring-amber-300 focus:outline-none"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => handleCancelStudentDailyAttendance(st.id, st.name)}
-                                disabled={!hasAnyStatus}
-                                className={`px-2.5 py-1.5 rounded-xl text-[11px] font-black whitespace-nowrap border transition ${
-                                  hasAnyStatus
-                                    ? 'bg-rose-50 hover:bg-rose-100 text-rose-600 border-rose-200'
-                                    : 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed'
-                                }`}
-                                title={`${st.name} 학생의 오늘(8·9교시) 출석 기록 취소`}
-                              >
-                                ↩️ 출석취소
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
               </div>
             </div>
 

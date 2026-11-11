@@ -1,23 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import {
+  applySessionCookie,
   createAdminSupabase,
   createAnonSupabase,
   createScopedSupabase,
+  deriveInternalAuthPassword,
   encodeSession,
-  getServerSession,
+  getValidServerSession,
   hashPassword,
   SESSION_COOKIE_NAME,
+  SESSION_MAX_AGE_SECONDS,
   verifyPassword,
 } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
-
-function deriveInternalAuthPassword(email: string): string {
-  const secret = process.env.SUPABASE_SERVICE_ROLE_KEY || 'internal-auth-secret';
-  const hmac = crypto.createHmac('sha256', secret).update(email).digest('hex').slice(0, 24);
-  return ` Auth!${hmac}9zZ `;
-}
 
 function getInternalEmails(classroomTag: string) {
   return {
@@ -40,7 +37,7 @@ export async function GET() {
     }
 
     const primaryClassroom = classrooms?.[0] || null;
-    const session = getServerSession();
+    const { session, refreshedToken } = await getValidServerSession();
 
     if (!session || !primaryClassroom || session.classroomId !== primaryClassroom.id) {
       return NextResponse.json({
@@ -50,7 +47,7 @@ export async function GET() {
       });
     }
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       initialized: true,
       authenticated: true,
       role: session.role,
@@ -60,6 +57,7 @@ export async function GET() {
         class_name: primaryClassroom.class_name,
       },
     });
+    return applySessionCookie(res, refreshedToken);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Server error';
     return NextResponse.json({ error: message }, { status: 500 });
@@ -209,7 +207,7 @@ export async function POST(req: NextRequest) {
         role: 'teacher',
         supervisorName: '담임선생님',
         accessToken: signInData.session.access_token,
-        exp: Date.now() + 1000 * 60 * 60 * 12,
+        exp: Date.now() + SESSION_MAX_AGE_SECONDS * 1000,
       });
 
       const res = NextResponse.json({
@@ -217,14 +215,7 @@ export async function POST(req: NextRequest) {
         role: 'teacher',
         classroom: { id: createdClass.id, class_name: createdClass.class_name },
       });
-      res.cookies.set(SESSION_COOKIE_NAME, token, {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: process.env.NODE_ENV === 'production',
-        path: '/',
-        maxAge: 60 * 60 * 12,
-      });
-      return res;
+      return applySessionCookie(res, token);
     }
 
     if (action === 'login') {
@@ -298,7 +289,7 @@ export async function POST(req: NextRequest) {
             ? '담임선생님'
             : String(supervisorName || '').trim() || '자습감독관',
         accessToken: signInData.session.access_token,
-        exp: Date.now() + 1000 * 60 * 60 * 12,
+        exp: Date.now() + SESSION_MAX_AGE_SECONDS * 1000,
       });
 
       const res = NextResponse.json({
@@ -310,18 +301,11 @@ export async function POST(req: NextRequest) {
             : String(supervisorName || '').trim() || '자습감독관',
         classroom: { id: classroom.id, class_name: classroom.class_name },
       });
-      res.cookies.set(SESSION_COOKIE_NAME, token, {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: process.env.NODE_ENV === 'production',
-        path: '/',
-        maxAge: 60 * 60 * 12,
-      });
-      return res;
+      return applySessionCookie(res, token);
     }
 
     if (action === 'change_password') {
-      const session = getServerSession();
+      const { session, refreshedToken } = await getValidServerSession();
       if (!session || session.role !== 'teacher') {
         return NextResponse.json(
           { error: '담임교사(관리자)만 비밀번호와 학급 설정을 변경할 수 있습니다.' },
@@ -359,7 +343,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: uErr.message }, { status: 400 });
       }
 
-      return NextResponse.json({ ok: true });
+      const res = NextResponse.json({ ok: true });
+      return applySessionCookie(res, refreshedToken);
     }
 
     return NextResponse.json({ error: '지원하지 않는 요청입니다.' }, { status: 400 });
